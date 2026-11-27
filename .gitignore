@@ -29,3 +29,6 @@ id_ed25519*
 .DS_Store
 Thumbs.db
 *.log
+
+# 含私钥，不提交
+docs/仓库连接信息.md
