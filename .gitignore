@@ -1,0 +1,31 @@
+# ── 二进制产物 ────────────────────────────────
+bin/
+build/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ── 依赖与构建缓存 ────────────────────────────
+frontend/node_modules/
+frontend/dist/
+node_modules/
+.gocache/
+.gomodcache/
+.gobin/
+.pnpm-store/
+
+# ── 密钥 / 凭据：绝对不能提交 ──────────────────
+.ssh/
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.env
+.env.*
+
+# ── 系统噪音 ──────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log

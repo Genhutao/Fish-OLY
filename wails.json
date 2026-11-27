@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "OLY Persona",
+  "outputfilename": "oly-persona",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm build",
+  "frontend:dev:watcher": "pnpm dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "OLY",
+    "email": ""
+  },
+  "info": {
+    "companyName": "OLY",
+    "productName": "OLY Persona",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026",
+    "comments": "AI-driven persona roleplay platform"
+  }
+}
