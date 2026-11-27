@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OLY 世界引擎 · 目标架构 v0.2</title>
+<style>
+:root{
+  --ink:#08080B;
+  --ink-2:#0D0D12;
+  --ink-3:#121218;
+  --line:rgba(237,231,220,.13);
+  --line-soft:rgba(237,231,220,.07);
+  --paper:#EDE7DC;
+  --muted:#8C8578;
+  --dim:#5F5A51;
+  --gold:#C9A227;
+  --gold-soft:#E3C36B;
+  --cyan:#6FA8A0;
+  --red:#B4574E;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--ink);color:var(--paper);
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  font-size:15px;line-height:1.75;-webkit-font-smoothing:antialiased;
+}
+.serif{font-family:"Songti SC","Noto Serif SC","Source Han Serif SC",Georgia,serif}
+.mono{font-family:"SF Mono",Menlo,Consolas,monospace}
+.wrap{max-width:1120px;margin:0 auto;padding:0 40px}
+a{color:inherit}
+
+/* ── hero ── */
+.hero{padding:96px 0 64px;border-bottom:1px solid var(--line)}
+.kicker{display:flex;gap:14px;align-items:center;font-size:11px;letter-spacing:.24em;color:var(--gold);text-transform:uppercase}
+.kicker::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent)}
+h1{font-family:"Songti SC","Noto Serif SC",Georgia,serif;font-size:74px;line-height:1.05;margin:26px 0 0;font-weight:400;letter-spacing:.08em}
+h1 em{font-style:normal;color:var(--gold-soft)}
+.lede{margin:22px 0 0;max-width:640px;font-size:17px;color:#CFC8BA}
+.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:52px;border-top:1px solid var(--line-soft)}
+.meta div{padding:18px 18px 0 0}
+.meta dt{font-size:10px;letter-spacing:.18em;color:var(--dim);text-transform:uppercase}
+.meta dd{margin:6px 0 0;font-size:13px;color:#CFC8BA}
+
+/* ── toc ── */
+.toc{position:sticky;top:0;z-index:20;background:rgba(8,8,11,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line-soft)}
+.toc ol{display:flex;gap:30px;list-style:none;margin:0;padding:14px 40px;max-width:1120px;margin:0 auto;overflow-x:auto}
+.toc a{display:flex;gap:8px;font-size:12px;color:var(--muted);text-decoration:none;white-space:nowrap}
+.toc a span{color:var(--dim);font-family:"SF Mono",Menlo,monospace}
+.toc a:hover{color:var(--gold-soft)}
+
+/* ── sections ── */
+section{padding:78px 0;border-bottom:1px solid var(--line-soft)}
+.sec-head{display:grid;grid-template-columns:86px 1fr;gap:24px;align-items:baseline;margin-bottom:40px}
+.sec-num{font-family:"SF Mono",Menlo,monospace;font-size:13px;color:var(--gold);letter-spacing:.1em}
+h2{font-family:"Songti SC","Noto Serif SC",Georgia,serif;font-size:32px;font-weight:400;margin:0;letter-spacing:.04em}
+.sub{margin:8px 0 0;font-size:14px;color:var(--muted);max-width:640px}
+h3{font-size:13px;letter-spacing:.16em;color:var(--gold-soft);text-transform:uppercase;margin:44px 0 16px;font-weight:500}
+h3:first-of-type{margin-top:0}
+
+/* ── invariants ── */
+.inv{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line-soft);border:1px solid var(--line-soft)}
+.inv article{background:var(--ink);padding:28px 26px}
+.inv b{display:block;font-family:"Songti SC",Georgia,serif;font-size:19px;font-weight:400;margin-bottom:10px;color:var(--paper)}
+.inv p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.7}
+.inv i{font-style:normal;display:block;font-family:"SF Mono",Menlo,monospace;font-size:11px;color:var(--gold);margin-bottom:14px;letter-spacing:.08em}
+
+/* ── layer stack ── */
+.stack{border-top:1px solid var(--line)}
+.layer{display:grid;grid-template-columns:150px 1fr;gap:0;border-bottom:1px solid var(--line-soft);padding:22px 0}
+.layer>.lname{font-size:12px;color:var(--dim);letter-spacing:.12em;padding-top:6px}
+.layer>.lname strong{display:block;color:var(--muted);font-weight:500;font-size:13px;letter-spacing:.02em;margin-bottom:4px}
+.row{display:grid;gap:10px}
+.row.c2{grid-template-columns:repeat(2,1fr)}
+.row.c3{grid-template-columns:repeat(3,1fr)}
+.row.c6{grid-template-columns:repeat(6,1fr)}
+.cell{border:1px solid var(--line);padding:14px 15px;background:rgba(255,255,255,.018);position:relative}
+.cell .t{font-size:13.5px;color:var(--paper);display:block;margin-bottom:3px}
+.cell .d{font-size:11.5px;color:var(--dim);line-height:1.55;display:block}
+.cell.gold{border-color:rgba(201,162,39,.45);background:rgba(201,162,39,.05)}
+.cell.gold .t{color:var(--gold-soft)}
+.cell.cyan{border-color:rgba(111,168,160,.4);background:rgba(111,168,160,.045)}
+.cell.cyan .t{color:var(--cyan)}
+.cell.dim{opacity:.55}
+.rail{font-size:10.5px;color:var(--dim);letter-spacing:.06em;writing-mode:vertical-rl;position:absolute;right:-26px;top:8px}
+
+/* ── svg block ── */
+.figure{border:1px solid var(--line);background:linear-gradient(180deg,rgba(255,255,255,.022),transparent 60%);padding:28px 24px 18px}
+.figure figcaption{margin-top:12px;font-size:12px;color:var(--dim);letter-spacing:.04em}
+
+/* ── tables ── */
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font-weight:400;font-size:10.5px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase;padding:0 14px 10px 0;border-bottom:1px solid var(--line)}
+td{padding:14px 14px 14px 0;border-bottom:1px solid var(--line-soft);color:#CFC8BA;vertical-align:top}
+td.k{color:var(--paper)}
+td .tag{display:inline-block;font-size:10.5px;letter-spacing:.08em;padding:2px 7px;border:1px solid var(--line);color:var(--muted);margin-right:6px}
+.tag.keep{color:var(--cyan);border-color:rgba(111,168,160,.4)}
+.tag.reshape{color:var(--gold-soft);border-color:rgba(201,162,39,.4)}
+.tag.rewrite{color:var(--red);border-color:rgba(180,87,78,.45)}
+.num{font-family:"SF Mono",Menlo,monospace;font-size:12px;color:var(--gold)}
+
+/* ── formula ── */
+.formula{border-left:2px solid var(--gold);padding:6px 0 6px 20px;margin:18px 0;font-family:"SF Mono",Menlo,monospace;font-size:12.5px;color:#D9D2C4;line-height:2.05;overflow-x:auto}
+.formula span{color:var(--dim)}
+
+/* ── budget bar ── */
+.budget{display:flex;height:44px;border:1px solid var(--line);margin:6px 0 0}
+.budget div{display:flex;align-items:center;justify-content:center;font-size:11px;color:#0B0B0F;letter-spacing:.04em;border-right:1px solid rgba(8,8,11,.45)}
+.budget div:last-child{border-right:0}
+.budget .m{background:var(--gold);color:#12100A;font-weight:600}
+.budget .s{background:rgba(237,231,220,.72)}
+.budget .c{background:rgba(111,168,160,.7)}
+.legend{display:flex;gap:26px;margin-top:12px;font-size:11.5px;color:var(--dim)}
+.legend b{color:var(--muted);font-weight:400}
+.legend i{display:inline-block;width:9px;height:9px;margin-right:6px;vertical-align:middle}
+
+/* ── decisions ── */
+.dec{display:grid;grid-template-columns:52px 1fr;gap:20px;padding:24px 0;border-top:1px solid var(--line-soft)}
+.dec:last-child{border-bottom:1px solid var(--line-soft)}
+.dec .n{font-family:"SF Mono",Menlo,monospace;font-size:12px;color:var(--gold)}
+.dec h4{margin:0 0 8px;font-size:15px;font-weight:500;color:var(--paper)}
+.dec p{margin:0;font-size:13.5px;color:var(--muted)}
+.dec p+p{margin-top:8px}
+.dec .why{color:var(--dim);font-size:12.5px}
+.dec .why b{color:var(--cyan);font-weight:400}
+
+/* ── tree ── */
+pre.tree{background:var(--ink-2);border:1px solid var(--line);padding:26px 28px;font-family:"SF Mono",Menlo,monospace;font-size:12.5px;line-height:1.95;color:#BDB6A8;overflow-x:auto;margin:0}
+pre.tree b{color:var(--gold-soft);font-weight:400}
+pre.tree span{color:var(--dim)}
+
+/* ── roadmap ── */
+.road{border-top:1px solid var(--line)}
+.road .stage{display:grid;grid-template-columns:120px 1fr 240px;gap:24px;padding:26px 0;border-bottom:1px solid var(--line-soft)}
+.road .v{font-family:"Songti SC",Georgia,serif;font-size:22px;color:var(--gold-soft)}
+.road .v small{display:block;font-family:"SF Mono",Menlo,monospace;font-size:10.5px;color:var(--dim);letter-spacing:.1em;margin-top:4px}
+.road ul{margin:0;padding-left:16px;font-size:13.5px;color:#CFC8BA}
+.road li{margin:4px 0}
+.road .exit{font-size:12px;color:var(--muted);border-left:1px solid var(--line);padding-left:16px}
+.road .exit b{display:block;font-size:10px;letter-spacing:.16em;color:var(--dim);text-transform:uppercase;margin-bottom:6px;font-weight:400}
+
+/* ── notes ── */
+.note{border:1px solid rgba(201,162,39,.28);background:rgba(201,162,39,.04);padding:18px 20px;font-size:13px;color:#D6CDBB;margin-top:22px}
+.note b{color:var(--gold-soft);font-weight:500}
+.dont{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line-soft)}
+.dont div{background:var(--ink);padding:18px 20px;font-size:13px;color:var(--muted)}
+.dont div b{display:block;color:#CFC8BA;font-weight:500;margin-bottom:4px;font-size:13.5px}
+
+footer{padding:60px 0 90px;color:var(--dim);font-size:12px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+
+@media (max-width:900px){
+  .wrap{padding:0 22px}
+  h1{font-size:46px}
+  .meta{grid-template-columns:repeat(2,1fr)}
+  .inv,.row.c3,.row.c6,.dont{grid-template-columns:1fr}
+  .layer,.sec-head,.road .stage{grid-template-columns:1fr;gap:12px}
+  .road .exit{border-left:0;padding-left:0}
+}
+</style>
+</head>
+<body>
+
+<header class="hero"><div class="wrap">
+  <div class="kicker">OLY World Engine / Architecture Draft</div>
+  <h1 class="serif">世界<em>引擎</em></h1>
+  <p class="lede">把「和角色聊天」换成「住进一个会自己运转的世界」。这份稿子只回答一件事：现有 Demo、VSA 记忆、Arc 的路由，怎么拼成一台能长期跑下去的东西。</p>
+  <dl class="meta">
+    <div><dt>版本</dt><dd>v0.2 · 设计稿</dd></div>
+    <div><dt>日期</dt><dd>2026-11-25</dd></div>
+    <div><dt>基线</dt><dd>产品方案 v0.1 / Demo v0.1</dd></div>
+    <div><dt>范围</dt><dd>架构与边界，不含实现</dd></div>
+  </dl>
+</div></header>
+
+<nav class="toc"><ol>
+  <li><a href="#s01"><span>01</span>三条不变量</a></li>
+  <li><a href="#s02"><span>02</span>分层</a></li>
+  <li><a href="#s03"><span>03</span>世界循环</a></li>
+  <li><a href="#s04"><span>04</span>记忆</a></li>
+  <li><a href="#s05"><span>05</span>提示板</a></li>
+  <li><a href="#s06"><span>06</span>决策</a></li>
+  <li><a href="#s07"><span>07</span>资产映射</a></li>
+  <li><a href="#s08"><span>08</span>目录与路线</a></li>
+</ol></nav>
+
+<main>
+
+<section id="s01"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">01</div>
+    <div><h2>三条不变量</h2><p class="sub">后面的所有模块都在服务这三条。任何设计如果让其中一条失效，就是错的，不管它看起来多优雅。</p></div>
+  </div>
+  <div class="inv">
+    <article>
+      <i>INVARIANT 01</i>
+      <b>事件先于状态</b>
+      <p>世界里的每一次变化先写一条事件，再由事件派生房间、角色、关系的当前值。事件是史记，读模型只是缓存。</p>
+    </article>
+    <article>
+      <i>INVARIANT 02</i>
+      <b>记忆是派生物</b>
+      <p>槽向量不是真相，成员原文才是。向量由成员重算，成员由事件重放。所以回滚的粒度是「一条成员」，不是「一次写入」——这个差别决定了记忆能不能被真正撤销。</p>
+    </article>
+    <article>
+      <i>INVARIANT 03</i>
+      <b>每次调用都要有理由</b>
+      <p>模型调用不是 tick 的默认动作。先算发言权，过阈值才装配上下文；没过就只更新状态，并记录「它选择沉默」。</p>
+    </article>
+  </div>
+</div></section>
+
+<section id="s02"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">02</div>
+    <div><h2>分层</h2><p class="sub">六层，三条边界：客户端只依赖接入层；域之间只通过事件与契约；运行时只依赖记忆域与能力域的接口。</p></div>
+  </div>
+
+  <div class="stack">
+    <div class="layer">
+      <div class="lname"><strong>体验层</strong>Client</div>
+      <div class="row c6">
+        <div class="cell"><span class="t">聊天</span><span class="d">会话 / 气泡 / 贴纸 / 通话演示</span></div>
+        <div class="cell"><span class="t">角色</span><span class="d">星图 / 详情 / 装配</span></div>
+        <div class="cell"><span class="t">漫游</span><span class="d">场景 / 精力 / 时间线</span></div>
+        <div class="cell"><span class="t">技能库</span><span class="d">技能 / 预设 / GitHub</span></div>
+        <div class="cell"><span class="t">动态</span><span class="d">社区 feed / 漫游日记</span></div>
+        <div class="cell"><span class="t">设置</span><span class="d">模型 / 记忆 / 界面</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="lname"><strong>接入层</strong>Boundary</div>
+      <div class="row c2">
+        <div class="cell gold"><span class="t">Wails Bindings</span><span class="d">桌面端唯一入口，方法名即契约</span></div>
+        <div class="cell dim"><span class="t">REST + SSE（后续）</span><span class="d">同一套用例换一层壳，不改域逻辑</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="lname"><strong>域服务</strong>Domains</div>
+      <div class="row c6">
+        <div class="cell"><span class="t">world</span><span class="d">规则 / 成员 / 可见性</span></div>
+        <div class="cell"><span class="t">room</span><span class="d">房间 / 消息 / 已读</span></div>
+        <div class="cell"><span class="t">persona</span><span class="d">卡 / 锚点 / 关系 / 情绪</span></div>
+        <div class="cell cyan"><span class="t">autonomy</span><span class="d">tick / 发言权 / 日程</span></div>
+        <div class="cell cyan"><span class="t">memory</span><span class="d">六层槽 / 检索 / 巩固</span></div>
+        <div class="cell"><span class="t">skill</span><span class="d">技能 / 预设 / 权限</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="lname"><strong>运行时</strong>Runtime</div>
+      <div class="row c3">
+        <div class="cell"><span class="t">上下文装配器</span><span class="d">槽位 / 预算 / 截断策略</span></div>
+        <div class="cell"><span class="t">模型路由</span><span class="d">cheap 判定 · main 生成 · judge 评测</span></div>
+        <div class="cell"><span class="t">护栏</span><span class="d">锚点校验 / 越界拦截 / 审计</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="lname"><strong>存储</strong>Store</div>
+      <div class="row c3">
+        <div class="cell"><span class="t">SQLite · 世界库</span><span class="d">events / worlds / rooms / personas / messages</span></div>
+        <div class="cell"><span class="t">SQLite · 记忆库</span><span class="d">slots（六层）/ 标签倒排 / 编码器版本</span></div>
+        <div class="cell"><span class="t">文件导出</span><span class="d">周记 Markdown / 角色卡 / 世界 JSON</span></div>
+      </div>
+    </div>
+
+    <div class="layer">
+      <div class="lname"><strong>外部</strong>External</div>
+      <div class="row c3">
+        <div class="cell"><span class="t">OpenAI 兼容模型</span><span class="d">DeepSeek / OpenAI / Ollama / 自建网关</span></div>
+        <div class="cell"><span class="t">GitHub</span><span class="d">技能搜索与 SKILL.md 导入</span></div>
+        <div class="cell dim"><span class="t">第三方 IM（后续）</span><span class="d">只读同步优先，不做主动私聊</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note"><b>边界的实际含义：</b>域之间不互相写表。room 产生了消息，只发一条 <span class="mono">message.created</span>；memory 自己决定要不要记，autonomy 自己决定要不要接话。这样任何一块都能被替换、被单独测试、被单独关掉。</div>
+</div></section>
+
+<section id="s03"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">03</div>
+    <div><h2>世界循环</h2><p class="sub">一拍不是「所有角色都说话」，而是「所有角色都发生变化，只有一两个开口」。中间三步全在本地完成，不烧 token。</p></div>
+  </div>
+
+  <figure class="figure" style="margin:0">
+    <svg viewBox="0 0 1000 300" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+      <title>世界循环的五个阶段</title>
+      <desc>事件进入、感知打分、上下文装配、生成、写回，形成一拍闭环</desc>
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="#6B6559" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+
+      <g font-family="PingFang SC, system-ui" font-size="13">
+        <rect x="20" y="60" width="168" height="78" fill="rgba(255,255,255,.02)" stroke="#3A372F"/>
+        <text x="104" y="88" text-anchor="middle" fill="#EDE7DC">01 事件进入</text>
+        <text x="104" y="108" text-anchor="middle" fill="#7A7466" font-size="11">发言 / 换场景 / 时间流逝</text>
+        <text x="104" y="124" text-anchor="middle" fill="#7A7466" font-size="11">全部落 events 表</text>
+
+        <rect x="216" y="60" width="168" height="78" fill="rgba(201,162,39,.05)" stroke="rgba(201,162,39,.5)"/>
+        <text x="300" y="88" text-anchor="middle" fill="#E3C36B">02 感知与打分</text>
+        <text x="300" y="108" text-anchor="middle" fill="#8C7A45" font-size="11">本地规则，零模型</text>
+        <text x="300" y="124" text-anchor="middle" fill="#8C7A45" font-size="11">算出谁想说话</text>
+
+        <rect x="412" y="60" width="168" height="78" fill="rgba(255,255,255,.02)" stroke="#3A372F"/>
+        <text x="496" y="88" text-anchor="middle" fill="#EDE7DC">03 装配上下文</text>
+        <text x="496" y="108" text-anchor="middle" fill="#7A7466" font-size="11">记忆 top-3 · 状态行</text>
+        <text x="496" y="124" text-anchor="middle" fill="#7A7466" font-size="11">按槽位预算裁剪</text>
+
+        <rect x="608" y="60" width="168" height="78" fill="rgba(111,168,160,.05)" stroke="rgba(111,168,160,.45)"/>
+        <text x="692" y="88" text-anchor="middle" fill="#6FA8A0">04 生成</text>
+        <text x="692" y="108" text-anchor="middle" fill="#4E7B75" font-size="11">仅 attention ≥ 阈值</text>
+        <text x="692" y="124" text-anchor="middle" fill="#4E7B75" font-size="11">其余角色只更新状态</text>
+
+        <rect x="804" y="60" width="168" height="78" fill="rgba(255,255,255,.02)" stroke="#3A372F"/>
+        <text x="888" y="88" text-anchor="middle" fill="#EDE7DC">05 写回</text>
+        <text x="888" y="108" text-anchor="middle" fill="#7A7466" font-size="11">消息 → 事件 → 记忆候选</text>
+        <text x="888" y="124" text-anchor="middle" fill="#7A7466" font-size="11">情绪与关系随更新</text>
+
+        <line x1="188" y1="99" x2="212" y2="99" stroke="#6B6559" stroke-width="1.4" marker-end="url(#a)"/>
+        <line x1="384" y1="99" x2="408" y2="99" stroke="#6B6559" stroke-width="1.4" marker-end="url(#a)"/>
+        <line x1="580" y1="99" x2="604" y2="99" stroke="#6B6559" stroke-width="1.4" marker-end="url(#a)"/>
+        <line x1="776" y1="99" x2="800" y2="99" stroke="#6B6559" stroke-width="1.4" marker-end="url(#a)"/>
+
+        <path d="M888 138 C888 214, 104 214, 104 142" fill="none" stroke="#4A453B" stroke-width="1.2" stroke-dasharray="4 5" marker-end="url(#a)"/>
+        <text x="496" y="200" text-anchor="middle" fill="#6B6559" font-size="11.5">下一拍 · 沉默也要写一条事件</text>
+
+        <text x="20" y="34" fill="#5F5A51" font-size="10.5" letter-spacing="2">ONE TICK</text>
+        <text x="980" y="34" text-anchor="end" fill="#5F5A51" font-size="10.5" letter-spacing="2">≈ 8s</text>
+
+        <text x="20" y="262" fill="#5F5A51" font-size="11">旁路任务：巩固（合并 → 升降 → 遗忘）与周记生成，低优先级，可暂停</text>
+      </g>
+    </svg>
+    <figcaption>一拍的开销上限：一次判定调用（可选）+ 一到两次主生成。20 人房间不等于 20 次调用。</figcaption>
+  </figure>
+
+  <h3>发言权怎么算</h3>
+  <div class="formula">
+    attention = 0.35·被@ + 0.25·话题相关 + 0.20·关系强度 + 0.10·紧急度 − 0.20·精力成本 + ε
+    <br><span>// 全部来自本地可读字段：消息、标签、affinity、energy。不调模型。</span>
+    <br><span>// ε 是少量噪声，防止同一批角色每次都以同样顺序开口。</span>
+  </div>
+  <p class="sub" style="max-width:760px;margin:0">阈值之上按分数排序，房间层再加冷却与轮转，保证同一角色不会连续刷屏。沉默不是没有输出——它是一条事件，会进反思阶段，影响下一次的日程。</p>
+
+  <h3>什么时候真的要模型</h3>
+  <table>
+    <tr><th style="width:170px">档位</th><th style="width:200px">用在哪</th><th>约束</th></tr>
+    <tr><td class="k">规则</td><td>发言权、精力、换场、冷却</td><td>纯本地，微秒级。任何时候都不许为了「更像活的」把它换成模型。</td></tr>
+    <tr><td class="k">cheap 判定</td><td>过阈值后的二次确认、摘要、打标</td><td>一次几十 token，只输出第一行的 <span class="mono">[说]</span> / <span class="mono">[不说]</span>；缓冲 48 字符即判定，用户看不到这段。</td></tr>
+    <tr><td class="k">main 生成</td><td>单聊、剧情、被判定要说话的群聊</td><td>完整提示板，带记忆与状态；失败要显式报错，不许静默降级成模板台词。</td></tr>
+    <tr><td class="k">judge 评测</td><td>离线：人格记分卡、记忆召回</td><td>不进线上链路，按周跑，出数字。</td></tr>
+  </table>
+</div></section>
+
+<section id="s04"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">04</div>
+    <div><h2>记忆</h2><p class="sub">这一层沿用 VSA 的形态：16384 位超向量、六层分槽、纯整数运算。它不是「向量库」，是可解释、能离线跑的记忆体——但撤销粒度得我们自己补一层。</p></div>
+  </div>
+
+  <h3>六层，分开检索</h3>
+  <table>
+    <tr><th style="width:120px">层</th><th style="width:240px">存什么</th><th style="width:90px">权重</th><th>OLY 里的例子</th></tr>
+    <tr><td class="k">K 关系</td><td>我们之间的约定、称呼、吵架</td><td class="num">1.15</td><td>「说好每周三一起看月亮」</td></tr>
+    <tr><td class="k">R 人格</td><td>价值观、口头禅、禁忌</td><td class="num">1.05</td><td>「绝不先道歉」</td></tr>
+    <tr><td class="k">E 情景</td><td>带时间与场景的事件</td><td class="num">1.05</td><td>「昨晚在旧书店避雨」</td></tr>
+    <tr><td class="k">F 事实</td><td>客观事实</td><td class="num">1.00</td><td>「她怕黑」</td></tr>
+    <tr><td class="k">WM 工作</td><td>最近几轮</td><td class="num">0.90</td><td>「刚刚在讨论剑术」</td></tr>
+    <tr><td class="k">M 元记忆</td><td>关于记忆的记忆</td><td class="num">0.85</td><td>「这件事我记错过一次」</td></tr>
+  </table>
+
+  <h3>检索打分</h3>
+  <div class="formula">
+    base  = sim × decay × (0.6 + 0.1·imp) × layer_w
+    <br>decay = 0.5 ^ (age / S)，S = 30 × clip(imp, 0.8, 4)，age 按 <b style="color:#E3C36B;font-weight:400">last_day</b> 算
+    <br>score = max(base, tag_score) + 1e-3·base   <span>// 标签与词面取强者，不相加</span>
+  </div>
+  <p class="sub" style="max-width:780px;margin:0">三个细节决定成败：衰减从原始重要度 imp0 算、不写回；被重新提起就刷新 last_day，天天说的事不该自然死亡；标签只做「词面零重合」时的保底，永远不许压过强词面匹配。</p>
+
+  <h3>写入与巩固</h3>
+  <div class="row c3" style="gap:12px;margin-top:4px">
+    <div class="cell"><span class="t">写入</span><span class="d">事件 → 规则抽取（18 类标签）→ 审查 → 查重：&gt;0.92 合并、&gt;0.62 追加同槽、否则开新槽</span></div>
+    <div class="cell"><span class="t">单槽上限</span><span class="d">最多 6 条绑定。宁可多开槽，不可串台——全捆是这条路唯一被判死的走法</span></div>
+    <div class="cell"><span class="t">夜间巩固</span><span class="d">合并 → 升降权 → 遗忘，顺序不可换。合并是遗忘的前置条件</span></div>
+  </div>
+
+  <div class="note"><b>和现在 Demo 的关系：</b>当前是「一个角色一个数组 + 32 维字符直方图」，正是 VSA 已经证伪的全捆形态。换掉它不是优化，是纠错。</div>
+
+  <h3>回滚粒度：成员是真相，向量是缓存</h3>
+  <p class="sub" style="margin:-6px 0 18px;max-width:800px">VSA 的 <span class="mono">write()</span> 走 merge / append 时是 <span class="mono">vec = bundle([prev, new])</span>。bundle 是多数投票，天生不可逆：一条错记忆并进槽之后，你没法把它从向量里减掉。所以这里必须改数据模型，不能靠加一个 undo 接口糊过去。</p>
+  <table>
+    <tr><th style="width:150px">洞</th><th style="width:320px">VSA 现状</th><th>本设计怎么补</th></tr>
+    <tr><td class="k">写入不可逆</td><td><span class="mono">bundle()</span> 直接改写槽向量，没有旧值可退</td><td>成员单独存；槽向量由成员集合重算，撤回一条是「重算」而不是「相减」</td></tr>
+    <tr><td class="k">墓碑粒度错位</td><td><span class="mono">forget()</span> 标的是槽（sid）。一槽最多 6 条，错 1 条连带屏蔽 5 条对的</td><td>墓碑下沉到成员级；槽内成员全撤，槽才消失</td></tr>
+    <tr><td class="k">权重没留痕</td><td>merge 用 1:1、append 用 3:1，历史权重没记，事后重放不出原向量</td><td>每条成员带自己的权重 <span class="mono">w</span>，向量 = <span class="mono">bundle(member × w)</span>，是纯函数</td></tr>
+    <tr><td class="k">编码器漂移</td><td>换编码器或种子，旧向量再也算不出来</td><td>库内固化 <span class="mono">encoder_version</span> 与 <span class="mono">bundle_rule_version</span>；一变更就整库重建，并记一条迁移事件</td></tr>
+  </table>
+  <div class="note"><b>为什么必须现在定：</b>「用户说这不是真的」是记忆产品的底线功能。等库里有十万条槽再改，重建规则就成了一次数据迁移事故。改成纯函数之后，巩固、合并、遗忘都只是对成员集合的编辑——可逆、可审计、可重放。</div>
+  <p class="sub" style="max-width:800px;margin-top:16px">唯一要知道的代价：定义变了，同一批记忆的分数会和 VSA 现有实现有微小偏差。所以移植完必须先跑 120 题回放，确认 Recall@5 不掉，再往下做。</p>
+
+  <h3>注入位置比措辞重要</h3>
+  <div class="figure">
+    <svg viewBox="0 0 1000 170" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+      <title>记忆注入位置</title>
+      <desc>记忆块紧贴用户发言，位于最后一条用户消息之前，而不是放在系统提示开头</desc>
+      <defs><marker id="b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M2 1L8 5L2 9" fill="none" stroke="#6B6559" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g font-family="PingFang SC, system-ui" font-size="12">
+        <rect x="20" y="46" width="150" height="54" fill="rgba(255,255,255,.02)" stroke="#3A372F"/>
+        <text x="95" y="70" text-anchor="middle" fill="#BDB6A8">system</text>
+        <text x="95" y="88" text-anchor="middle" fill="#6B6559" font-size="10.5">身份 · 锚点 · 状态</text>
+
+        <rect x="190" y="46" width="150" height="54" fill="rgba(255,255,255,.02)" stroke="#3A372F"/>
+        <text x="265" y="70" text-anchor="middle" fill="#BDB6A8">近 8 轮</text>
+        <text x="265" y="88" text-anchor="middle" fill="#6B6559" font-size="10.5">原文</text>
+
+        <rect x="360" y="34" width="300" height="78" fill="rgba(201,162,39,.07)" stroke="rgba(201,162,39,.55)"/>
+        <text x="510" y="62" text-anchor="middle" fill="#E3C36B">【我记得的事】</text>
+        <text x="510" y="82" text-anchor="middle" fill="#8C7A45" font-size="10.5">第二人称 · top-3 · ≤600 token</text>
+        <text x="510" y="99" text-anchor="middle" fill="#8C7A45" font-size="10.5">贴着下一轮说，不放在开头</text>
+
+        <rect x="680" y="46" width="150" height="54" fill="rgba(255,255,255,.02)" stroke="#3A372F"/>
+        <text x="755" y="70" text-anchor="middle" fill="#BDB6A8">用户发言</text>
+        <text x="755" y="88" text-anchor="middle" fill="#6B6559" font-size="10.5">这一句</text>
+
+        <line x1="170" y1="73" x2="186" y2="73" stroke="#6B6559" stroke-width="1.2" marker-end="url(#b)"/>
+        <line x1="340" y1="73" x2="356" y2="73" stroke="#6B6559" stroke-width="1.2" marker-end="url(#b)"/>
+        <line x1="660" y1="73" x2="676" y2="73" stroke="#6B6559" stroke-width="1.2" marker-end="url(#b)"/>
+
+        <text x="20" y="140" fill="#5F5A51" font-size="11">同一个「我叫什么」，实测：记忆置顶 1/8 答对 · 紧贴发言 5/8 · 改成第二人称 8/8</text>
+      </g>
+    </svg>
+    <figcaption>所以提示板的 Memory 槽落在消息流里，不落在 system 里。这是布局问题，不是措辞问题。</figcaption>
+  </div>
+</div></section>
+
+<section id="s05"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">05</div>
+    <div><h2>提示板</h2><p class="sub">不是把检索结果拼进去，是按槽位和预算做取舍。超预算先降级低级槽，Identity 永远不截断。</p></div>
+  </div>
+
+  <div class="budget">
+    <div class="s" style="width:12%">Identity 12</div>
+    <div class="s" style="width:13%">Canon 13</div>
+    <div class="s" style="width:8%">State 8</div>
+    <div class="m" style="width:25%">Memory 25</div>
+    <div class="s" style="width:22%">Recent 22</div>
+    <div class="c" style="width:8%">Skills 8</div>
+    <div class="s" style="width:12%">Output 12</div>
+  </div>
+  <div class="legend">
+    <span><i style="background:rgba(237,231,220,.72)"></i><b>静态段</b> 落 system，一次装配</span>
+    <span><i style="background:#C9A227"></i><b>记忆</b> 落消息流，贴着发言</span>
+    <span><i style="background:rgba(111,168,160,.7)"></i><b>技能</b> 已装备片段，按优先级去重</span>
+  </div>
+
+  <table style="margin-top:34px">
+    <tr><th style="width:110px">槽位</th><th style="width:290px">装什么</th><th style="width:90px">预算</th><th>降级策略</th></tr>
+    <tr><td class="k">Identity</td><td>身份、七维、核心锚点、禁忌</td><td class="num">12%</td><td>不截断。宁可挤掉记忆，也不能丢锚点。</td></tr>
+    <tr><td class="k">Canon</td><td>世界规则、当前场景、房间主题</td><td class="num">13%</td><td>规则全留，场景描述可缩成一句。</td></tr>
+    <tr><td class="k">State</td><td>心情向量摘要、精力、对谁的好感</td><td class="num">8%</td><td>只留数值与一句 mood line。</td></tr>
+    <tr><td class="k">Memory</td><td>检索 top-3，第二人称改写</td><td class="num">25%</td><td>按分数截断；第 3 条起可只留半句。</td></tr>
+    <tr><td class="k">Recent</td><td>最近 8–12 轮原文</td><td class="num">22%</td><td>从最旧开始丢，保住最后两轮。</td></tr>
+    <tr><td class="k">Skills</td><td>已装备技能的提示片段</td><td class="num">8%</td><td>同类只留优先级最高的一个。</td></tr>
+    <tr><td class="k">Output</td><td>长度区间、禁语、不跳出角色</td><td class="num">12%</td><td>永不截断。</td></tr>
+  </table>
+
+  <div class="note"><b>一个刻意的取舍：</b>不做「全量历史 + 长上下文」。跨周相关记忆的长上下文全中率只有 45%，而且成本随月份线性涨。检索 + 预算才是能跑一年的方案。</div>
+</div></section>
+
+<section id="s06"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">06</div>
+    <div><h2>七个设计决策</h2><p class="sub">每个决策都写清楚「为什么不是另一种」。这些是后面写代码时最容易被悄悄改掉的地方。</p></div>
+  </div>
+
+  <div class="dec"><div class="n">01</div><div>
+    <h4>记忆放在本地进程里，不做 sidecar</h4>
+    <p>VSA 是纯整数位运算，没有模型、没有外部依赖。把它搬进宿主进程，一次检索是微秒级；挂成 Python 服务则每拍两次 IPC，还要多带一个运行时。</p>
+    <p class="why"><b>代价：</b>要重写一份内核；<b>对冲：</b>用 VSA 现成的 120 题回放做验收，Recall@5 必须落在 0.70 以上，偏了就是移植错了。</p>
+  </div></div>
+
+  <div class="dec"><div class="n">02</div><div>
+    <h4>群聊走「本地打分 + 便宜模型确认」两段式</h4>
+    <p>第一段纯规则算 attention，第二段只对过线的角色做一次几十 token 的判定。Arc 那边已经证明这条路可行：先输出一个标记，网关缓冲到第一个换行再决定要不要转发给大模型。</p>
+    <p class="why"><b>为什么不直接每个角色都调模型：</b>20 人房间每拍 20 次调用，成本与延迟都不可接受，而且大多数角色本来就该沉默。</p>
+  </div></div>
+
+  <div class="dec"><div class="n">03</div><div>
+    <h4>世界数据用事件表，不用「当前状态表 + 定时快照」</h4>
+    <p>重启后世界还在，靠的是 events 重放，而不是把 map 序列化到磁盘。事件同时喂给记忆抽取、审计、回放和评测。</p>
+    <p class="why"><b>代价：</b>读模型要维护投影；<b>收益：</b>任何一条记忆都能回答「你从哪句话记住的」。</p>
+  </div></div>
+
+  <div class="dec"><div class="n">04</div><div>
+    <h4>情绪是状态机，不是提示词里的一句话</h4>
+    <p>E(t+1)=0.8·E(t)+0.2·ΔE，情绪向量再反推 temperature、回复长度区间、反问概率。同一句「我没事」，受伤时该短、该冷、该不追问。</p>
+    <p class="why"><b>为什么不用 mood 字符串：</b>字符串只能写进提示词，改不了检索排序，也没法做「今天和昨天不一样」的回归测试。</p>
+  </div></div>
+
+  <div class="dec"><div class="n">05</div><div>
+    <h4>只有单聊 / 剧情 / 过线群聊打模型，漫游永远不打</h4>
+    <p>漫游是状态机加模板，它的价值在「一直在动」，不在措辞。把模型留给用户真正看的地方。</p>
+    <p class="why"><b>如果哪天要给漫游接模型：</b>先做「事件 → 摘要 → 写记忆」的离线任务，让角色记得昨天去过哪，而不是实时生成动作描写。</p>
+  </div></div>
+
+  <div class="dec"><div class="n">06</div><div>
+    <h4>先模块化单体，不拆服务</h4>
+    <p>一个进程、按域分包、跨域只发事件。接口层保持 Wails 绑定不变，前端一行不用改。</p>
+    <p class="why"><b>拆服务的时机：</b>单世界并发或多人协作成为瓶颈时。现在拆，只会把调试成本乘以进程数。</p>
+  </div></div>
+
+  <div class="dec"><div class="n">07</div><div>
+    <h4>槽向量是成员集合的纯函数，不是写入历史的累积</h4>
+    <p>bundle 是多数投票，天生不可逆。所以真相放在成员层：每条记忆是一条不可变的成员记录，槽向量每次由成员重算。撤回一条 = 从集合里去掉一条 + 重算，不是对向量做减法。</p>
+    <p class="why"><b>代价：</b>和 VSA 现有分数会有微小偏差，得用 120 题重跑确认召回不掉；<b>收益：</b>墓碑、撤销、巩固全都退化成集合编辑，可逆、可审计、可重放。</p>
+  </div></div>
+</div></section>
+
+<section id="s07"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">07</div>
+    <div><h2>现有资产怎么接</h2><p class="sub">三份东西各有各的位置：VSA 给记忆，Arc 给路由思路，OLY 给界面与世界。不要试图把它们合成一个框架。</p></div>
+  </div>
+
+  <table>
+    <tr><th style="width:150px">资产</th><th style="width:280px">真正有用的部分</th><th>在架构里的位置</th></tr>
+    <tr>
+      <td class="k">VSA 内核</td>
+      <td>超向量原语、六层分槽、查重阈值、衰减公式、巩固三件套</td>
+      <td>memory 域的全部实现。Python 与 TS 两份参考实现可以逐条对照移植。</td>
+    </tr>
+    <tr>
+      <td class="k">VSA 评测</td>
+      <td>120 题数据集、Recall@5 / MRR / 误记忆率、人格记分卡</td>
+      <td>不进产品，进 CI 与周报。这是判断「记忆有没有变差」的唯一尺子。</td>
+    </tr>
+    <tr>
+      <td class="k">Arc 的网关</td>
+      <td>首行标记 + 缓冲判定、两份上下文投影、工具痕迹索引</td>
+      <td>借思路写进 runtime 的判定器与装配器。不搬代码，也不套一层网关。</td>
+    </tr>
+    <tr>
+      <td class="k">Arc 的日记</td>
+      <td>按年/月/周落盘的日记体，人可读</td>
+      <td>导出层。世界史给人看的样子，不当主存储。</td>
+    </tr>
+    <tr>
+      <td class="k">OLY 现有前端</td>
+      <td>13 个路由、双主题、技能库、设置页</td>
+      <td>原样保留。所有改造都在后端与数据层，界面只多两个入口：世界史、记忆库。</td>
+    </tr>
+  </table>
+
+  <h3>现有代码的处置</h3>
+  <table>
+    <tr><th style="width:200px">模块</th><th style="width:120px">处置</th><th>说明</th></tr>
+    <tr><td class="k">React 全部页面</td><td><span class="tag keep">保留</span></td><td>只加只读视图；不要为了架构重构去动已经好用的界面。</td></tr>
+    <tr><td class="k">settings.go</td><td><span class="tag keep">保留</span></td><td>加两个字段：记忆库路径、编码器版本。</td></tr>
+    <tr><td class="k">app.go 的存储</td><td><span class="tag reshape">改造</span></td><td>map 换成仓储接口，内存实现先留着跑测试。</td></tr>
+    <tr><td class="k">recallLocked / mockEmbed</td><td><span class="tag rewrite">重写</span></td><td>整块换成 VSA 的分层检索，旧接口保留签名以免前端改动。</td></tr>
+    <tr><td class="k">chat.go 的模板发言</td><td><span class="tag rewrite">重写</span></td><td>换成 autonomy 的发言权调度，模板降级为「无模型时的兜底」。</td></tr>
+    <tr><td class="k">roam.go</td><td><span class="tag reshape">改造</span></td><td>状态机保留，改成事件源之一；去掉「22% 概率串门」这种隐式耦合，改由事件触发。</td></tr>
+  </table>
+
+  <h3>VSA 内核要动的三处</h3>
+  <table>
+    <tr><th style="width:170px">位置</th><th style="width:300px">现在</th><th>改成</th></tr>
+    <tr><td class="k">Slot.members</td><td>字符串数组，只留原文</td><td>成员记录：id / text / day / imp / w / refs / state</td></tr>
+    <tr><td class="k">Memory.write</td><td>直接改写 <span class="mono">slot.vec</span> 并 <span class="mono">count++</span></td><td>追加成员 → 重算该槽向量（≤6 个成员，微秒级）</td></tr>
+    <tr><td class="k">MemoryService.forget</td><td>sid 级墓碑，整槽屏蔽</td><td>成员级墓碑；槽内成员全撤才移除</td></tr>
+  </table>
+  <div class="note"><b>附带的好处：</b>这三处改完之后，<span class="mono">consolidate</span> 反而更简单——它本来就是取 medoid（一个成员的原向量），天然是成员集合的函数。只有 <span class="mono">write()</span> 的累积式 bundle 需要改。</div>
+</div></section>
+
+<section id="s08"><div class="wrap">
+  <div class="sec-head">
+    <div class="sec-num">08</div>
+    <div><h2>目录与路线</h2><p class="sub">先给包边界，再给四个阶段。每个阶段的退出标准都能跑、能看、能回放。</p></div>
+  </div>
+
+  <pre class="tree">oly/
+├── <b>cmd/oly</b>/              <span>启动、Wails 装配</span>
+├── <b>internal/world</b>/        <span>世界、规则、可见性</span>
+├── <b>internal/room</b>/         <span>房间、消息、已读、事件发布</span>
+├── <b>internal/persona</b>/      <span>人设卡、锚点、关系、情绪状态机</span>
+├── <b>internal/autonomy</b>/     <span>tick、发言权打分、日程、冷却</span>
+├── <b>internal/memory</b>/
+│   ├── hdc.go          <span>16384 位原语：bind / bundle / sim</span>
+│   ├── encode.go       <span>稳定哈希，逐 token 定向量</span>
+│   ├── labels.go       <span>18 类标签与词表</span>
+│   ├── slot.go         <span>六层、单槽上限、查重与合并</span>
+│   ├── search.go       <span>分层 top-k、衰减、标签保底</span>
+│   └── consolidate.go  <span>合并 → 升降 → 遗忘</span>
+├── <b>internal/runtime</b>/
+│   ├── board.go        <span>提示板：槽位、预算、截断</span>
+│   ├── router.go       <span>cheap / main / judge 三档</span>
+│   └── guard.go        <span>锚点校验、越界拦截</span>
+├── <b>internal/store</b>/       <span>SQLite 仓储 + 事件表 + 迁移</span>
+├── <b>internal/api</b>/         <span>Wails 绑定（未来 REST 同层）</span>
+└── <b>web</b>/                  <span>现有 React，原样保留</span></pre>
+
+  <div class="road" style="margin-top:40px">
+    <div class="stage">
+      <div class="v">M0<small>4 WEEKS</small></div>
+      <ul>
+        <li>事件表与仓储接口，世界重启不丢</li>
+        <li>VSA 内核移植：原语 / 编码 / 六层 / 检索</li>
+        <li>memory 域替换 mockEmbed，接口签名不变</li>
+      </ul>
+      <div class="exit"><b>退出标准</b>120 题回放 Recall@5 ≥ 0.70；关掉应用再打开，聊天记录与世界状态都在。</div>
+    </div>
+    <div class="stage">
+      <div class="v">M1<small>6 WEEKS</small></div>
+      <ul>
+        <li>autonomy：发言权打分、冷却、日程</li>
+        <li>群聊接模型，cheap 判定先跑</li>
+        <li>记忆注入改到消息流，第二人称</li>
+      </ul>
+      <div class="exit"><b>退出标准</b>两角色无人干预聊 30 轮，锚点不崩；每轮调用次数可解释。</div>
+    </div>
+    <div class="stage">
+      <div class="v">M2<small>6 WEEKS</small></div>
+      <ul>
+        <li>摘要与事实层，夜间巩固任务</li>
+        <li>情绪状态机接进生成参数与检索排序</li>
+        <li>世界史导出为周记</li>
+      </ul>
+      <div class="exit"><b>退出标准</b>离开 24 小时回来，角色能主动提起期间发生的事；记忆可撤可查来路。</div>
+    </div>
+    <div class="stage">
+      <div class="v">M3<small>8 WEEKS+</small></div>
+      <ul>
+        <li>串门协议、导演暂停与回滚</li>
+        <li>技能带权限与版本，导入导出标准化</li>
+        <li>评测闸门进 CI：人格记分卡 + 记忆回归</li>
+      </ul>
+      <div class="exit"><b>退出标准</b>三个验收场景全过：串门可撤回、回滚后状态一致、导入技能下一轮生效。</div>
+    </div>
+  </div>
+
+  <h3>风险与不做</h3>
+  <table>
+    <tr><th style="width:160px">风险</th><th style="width:200px">表现</th><th>对策</th></tr>
+    <tr><td class="k">成本失控</td><td>多角色持续对话 token 暴涨</td><td>发言权闸门 + 三档模型 + 摘要压缩；按世界核算每百条消息成本。</td></tr>
+    <tr><td class="k">人格漂移</td><td>越演越像客服</td><td>锚点进不截断槽；每 N 轮对照重写；记分卡按周跑。</td></tr>
+    <tr><td class="k">记忆污染</td><td>错误事实越积越多</td><td>写入审查 + 可撤销 + 冲突保留 valid_from/valid_to，不覆盖。</td></tr>
+    <tr><td class="k">单锁争用</td><td>tick 与读请求互相等</td><td>写路径串行、读路径给快照；模型调用一律在锁外。</td></tr>
+  </table>
+
+  <div class="dont" style="margin-top:26px">
+    <div><b>不做通用 IM</b>不替代微信 QQ，只做世界内的群聊。</div>
+    <div><b>不做无限制自治</b>所有自主行为可暂停、可单步、可回滚。</div>
+    <div><b>不做模型训练</b>模型可替换，平台负责世界、记忆与编排。</div>
+    <div><b>不做无治理广场</b>UGC 世界与技能必须有分级与举报闭环。</div>
+  </div>
+</div></section>
+
+</main>
+
+<footer><div class="wrap" style="display:flex;justify-content:space-between;width:100%;flex-wrap:wrap;gap:16px">
+  <span>OLY 世界引擎 · 架构设计稿 v0.2 · 2026-11-25</span>
+  <span>基线：产品方案 v0.1（内部讨论稿）· Demo v0.1（Windows 演示版）</span>
+</div></footer>
+
+</body>
+</html>
