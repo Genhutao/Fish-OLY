@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -37,8 +38,10 @@ TEST_CASE("路由表：并发读写冒烟（白名单 rwlock）", "[exec][router
             }
         });
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));   // 让读者线程先起跑
     for (int i = 0; i < 200; ++i) {
         r.rebind(i % 64, static_cast<std::size_t>(i % 4) + 1);
+        if (i % 20 == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     stop.store(true);
     for (auto& t : readers) t.join();
