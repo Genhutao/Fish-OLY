@@ -40,6 +40,14 @@ add_subdirectory(src/events)
 add_subdirectory(src/logdb)
 add_subdirectory(src/app)
 
+# ── exec：执行内核（boost-asio；依赖就绪时启用）─────────────────────────
+find_package(Boost CONFIG QUIET)
+if(Boost_FOUND)
+    add_subdirectory(src/exec)
+else()
+    message(STATUS "Boost not found - exec module disabled (vcpkg provides boost-asio)")
+endif()
+
 # ── 测试（Catch2 就绪时启用；未就绪仅禁用测试，主构建不受影响）──────────
 if(OLY_BUILD_TESTS)
     find_package(Catch2 3 CONFIG QUIET)

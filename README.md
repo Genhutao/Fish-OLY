@@ -12,9 +12,9 @@ oly-engine/
 │   ├── codec/            规范二进制编码（Encoder / Decoder，05 §2）
 │   ├── events/           事件包络：命令/事实两域、哈希链、创世常量（04）
 │   ├── logdb/            段存储：批次组帧、CRC、滚动、读校验（05 §2–3）
-│   ├── exec/             （M0-2）loop 池、轮式调度、通道
+│   ├── exec/             执行内核：loop 池、轮式调度、两车道队列、路由表（01）
 │   ├── gateway/          （M1）模型网关
-│   ├── domain/           （M0-2）领域内核类型
+│   ├── domain/           （M0-3）领域内核类型
 │   └── app/              oly 可执行入口（sanity）
 └── tests/
     ├── unit/             各模块单元测试
@@ -40,7 +40,7 @@ Linux：`cmake --preset linux-debug && cmake --build --preset linux-debug && cte
 - 无 vcpkg 依赖时：core/codec/events/logdb/app 仍可配置构建（tests 自动禁用）。
 - 预设见 `CMakePresets.json`；警告即错误（`/W4 /WX`、`-Wall -Wextra -Wpedantic`）。
 
-## 当前状态（M0 步骤 1：事件层先于一切）
+## 当前状态
 
 | 完成 | 说明 |
 |---|---|
@@ -49,6 +49,7 @@ Linux：`cmake --preset linux-debug && cmake --build --preset linux-debug && cte
 | 规范编码 codec | 定宽 LE + length-prefixed；哈希链只对规范字节计算 |
 | 事件包络 | 两域/三种流/创世常量/seal 与解码校验（04 §3） |
 | 段存储 | 组帧 + CRC + 滚动 + 先持久后可见游标 + 读端全链校验（05 §2–6） |
+| **执行内核 exec** | loop 池（thread-per-core）、中央轮式 tick 调度器（过期插入/溢出表/摘槽）、两车道有界队列、会话路由表（白名单 rwlock）（01） |
 | 黄金回放种子 | 写 → 读 → 确定性折叠断言框架 |
 
-下一步（13 §4）：exec 执行内核（loop/轮式调度）→ 领域类型 → 单会话端到端黄金场景。
+下一步（13 §4）：领域类型（domain）→ 单会话端到端黄金场景（两角色脚本对话 30 轮）。

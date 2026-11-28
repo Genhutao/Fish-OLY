@@ -3,7 +3,8 @@
   "name": "oly-engine",
   "version": "0.1.0",
   "dependencies": [
-    "catch2"
+    "catch2",
+    "boost-asio"
   ],
   "builtin-baseline": "5d35de2ee8b13d0bcec328153605638a74fbbf84"
 }
