@@ -19,6 +19,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,20 @@ struct DeliberationConfig {
     float sat_gain = 0.5f;                   // τ_speak 随饱和度上调增益：预算将尽 → 群体"今日话少"
 };
 
+// 行动解释（11 §5 的内核形态）：一次决策（发言或被记沉默）的全部归因原料。
+// API 端点（10 §4.8）后续批经 runtime 组装下发；本形态供测试/审计/可观测。
+struct DecisionTrace {
+    uint64_t tick = 0;
+    float attention = 0.0f, tau = 0.0f;
+    float mention = 0.0f, topic = 0.0f, novelty = 0.0f, urgency = 0.0f;   // 特征表（06 §2.2）
+    bool speak = false, fallback = false, silence_noted = false;
+    std::string model;
+    uint32_t tokens_in = 0, tokens_out = 0;
+    BoardManifest manifest{};                  // board_manifest（06 §3.0 可解释性）
+    std::vector<uint64_t> cited_seqs;          // 引用记忆的溯源 seq（02 §5.3 provenance）
+    ContentId config_id{};                     // 生效配置（08 §1）
+};
+
 class DeliberationDriver final : public AutonomyDriver {
 public:
     // reserve：语气储备库（06 §3.2：会话空闲拍预生成；M0 由构造方注入固定组）
@@ -48,6 +63,8 @@ public:
 
     // 最近一次装配的提示板清单（06 §3.0 可解释性：槽位 token 实耗；测试/观测用）
     const BoardManifest& last_manifest() const noexcept { return last_manifest_; }
+    // 最近一次决策的行动解释（11 §5：发言/沉默均可展开；审计·评测·客服共用）
+    const std::optional<DecisionTrace>& last_trace() const noexcept { return last_trace_; }
 
 private:
     TickOutcome degrade();   // 网关失败/拒绝 → 储备 → 沉默
@@ -64,6 +81,7 @@ private:
     float activity_ema_ = 0.0f;
     std::size_t reserve_idx_ = 0;
     BoardManifest last_manifest_{};
+    std::optional<DecisionTrace> last_trace_;
 };
 
 }   // namespace oly::session

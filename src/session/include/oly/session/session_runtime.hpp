@@ -128,6 +128,8 @@ public:
     const std::unordered_set<uint64_t>& recalled_seqs() const noexcept { return recalled_; }
     // 回滚水位（11 §4）：superseded_from = target+1；0 = 从未回滚
     uint64_t superseded_from() const noexcept { return superseded_from_; }
+    // 自治驱动句柄（11 §5 explain 组装用；返回nullptr = 未挂驱动）
+    const AutonomyDriver* autonomy_driver_of(domain::PrincipalId persona) const noexcept;
 
     // 会话键（轮式调度器/路由表使用；ULID 前 8 字节）
     static uint64_t key(domain::SessionId id) noexcept;

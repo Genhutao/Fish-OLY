@@ -80,6 +80,8 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
         oc.config_id = cfg_.effective->content_id;   // 08 §1：行为归因到参数值
     }
 
+    std::vector<uint64_t> cited_seqs;   // 引用记忆溯源（02 §5.3；trace 归因用）
+
     // ── 每拍状态推进（疲惫恢复 / 冷却衰减）────────────────────────
     energy_ = std::min(1.0f, energy_ + 0.05f);
     if (cooldown_ > 0) --cooldown_;
@@ -173,6 +175,8 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
                              hits);
                 for (auto& h : hits) {
                     in.memory.emplace_back(static_cast<float>(h.importance), std::move(h.content));
+                    cited_seqs.insert(cited_seqs.end(), h.source_seqs.begin(),
+                                      h.source_seqs.end());   // provenance（02 §5.3）
                 }
             }
         }
@@ -210,6 +214,28 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
         const float mentioned[1] = {mention};
         oc.silence_noted = !collect_silences(ctx.stream_key, ctx.tick, scores, mentioned, oc.tau)
                                 .empty();
+    }
+
+    // ── 行动解释（11 §5）：发言/被记沉默均可展开（审计·评测·客服共用）──
+    if (oc.speak || oc.silence_noted) {
+        DecisionTrace t;
+        t.tick = ctx.tick;
+        t.attention = oc.attention;
+        t.tau = oc.tau;
+        t.mention = mention;
+        t.topic = static_cast<float>(topic);
+        t.novelty = static_cast<float>(novelty);
+        t.urgency = urgency;
+        t.speak = oc.speak;
+        t.fallback = oc.fallback;
+        t.silence_noted = oc.silence_noted;
+        t.model = oc.model;
+        t.tokens_in = oc.tokens_in;
+        t.tokens_out = oc.tokens_out;
+        t.manifest = last_manifest_;
+        t.cited_seqs = std::move(cited_seqs);
+        t.config_id = oc.config_id;
+        last_trace_ = std::move(t);
     }
 
     // 近期发言率 EMA（06 §2.3 校准输入；热闹房间自动 ↑τ）

@@ -512,4 +512,12 @@ Result<ContentId> SessionRuntime::snapshot_now() const {
     return write_snapshot(snap_dir_, s);
 }
 
+const AutonomyDriver* SessionRuntime::autonomy_driver_of(
+    const domain::PrincipalId persona) const noexcept {
+    for (const auto& [pid, driver] : drivers_) {
+        if (pid == persona) return driver.get();
+    }
+    return nullptr;
+}
+
 }   // namespace oly::session

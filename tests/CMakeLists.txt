@@ -24,6 +24,8 @@ add_executable(oly_tests
     golden/test_quota_loop.cpp
     golden/test_config_loop.cpp
     golden/test_director_loop.cpp
+    golden/test_explain.cpp
+    golden/test_anchor_drift.cpp
     golden/test_host_smoke.cpp)
 target_compile_features(oly_tests PRIVATE cxx_std_20)
 target_link_libraries(oly_tests PRIVATE
