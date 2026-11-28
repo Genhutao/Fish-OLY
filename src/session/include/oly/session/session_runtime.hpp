@@ -8,6 +8,7 @@
 // recover() 走启动重放（快照 + 补缺口，05 §6），不重写 created。
 #pragma once
 
+#include "oly/config/config.hpp"
 #include "oly/domain/domain.hpp"
 #include "oly/exec/lane_queue.hpp"
 #include "oly/exec/tick_wheel.hpp"
@@ -26,7 +27,7 @@
 
 namespace oly::session {
 
-enum class CmdAction : uint8_t { SendMessage = 1, Tick = 2, AdvanceRead = 3 };
+enum class CmdAction : uint8_t { SendMessage = 1, Tick = 2, AdvanceRead = 3, ConfigSet = 4 };
 
 struct Command {
     CommandId id;
@@ -36,6 +37,7 @@ struct Command {
     uint64_t tick = 0;                     // Tick 命令携带拍号
     std::string text;                      // SendMessage payload
     uint64_t read_seq = 0;                 // AdvanceRead：推进读游标目标（10 §4.3）
+    std::vector<std::byte> config_patch;   // ConfigSet：配置补丁规范编码（08 §1）
 };
 
 // 感知缓冲窗口上限（非事实态，重放可重建；超限从头淘汰）
@@ -103,6 +105,9 @@ public:
     uint64_t dropped_background() const noexcept { return queue_.dropped_background(); }
     const domain::Session& session() const noexcept { return *registry_->session(id_); }
 
+    // 生效配置（08 §1）：platform 基线 × 会话层补丁；config.set 热生效（下一拍可见）
+    const config::Effective& effective() const noexcept { return effective_; }
+
     // 会话键（轮式调度器/路由表使用；ULID 前 8 字节）
     static uint64_t key(domain::SessionId id) noexcept;
 
@@ -127,6 +132,8 @@ private:
     std::filesystem::path snap_dir_;
     std::shared_ptr<const domain::IdentitySnapshot> identity_;   // 身份快照（无锁权限源）
     std::function<void(const std::vector<events::EventEnvelope>&)> on_commit_;
+    config::Values session_values_{};    // 会话层解析值（config.set 依序应用；重放还原）
+    config::Effective effective_{};      // 生效配置（含包络钳制 + 内容寻址 id）
 };
 
 }   // namespace oly::session

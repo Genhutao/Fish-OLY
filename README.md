@@ -17,6 +17,7 @@ oly-engine/
 │   ├── identity/         身份分片：单写者执行器 + 原子快照发布（01 §1）
 │   ├── session/          会话运行时：准入/幂等/估分/提示板/决策/快照重放/多 loop 分片（04–06）
 │   ├── memory/           长期记忆：候选 × 审阅覆盖 × 召回 × 重建协议 + 确定性归纳器（02 §5/03 §6/06 §4）
+│   ├── config/           配置面：分层合并（platform→world→session→persona）、平台包络、三级自调（08）
 │   ├── quota/            配额：两层桶（突发+体量窗口）× 主体/世界双维、预留-结算-释放（09）
 │   ├── gateway/          模型网关：Provider 接口、优先级车道、配额硬墙、熔断器、确定性 Fake（07）
 │   ├── api/              REST + WS 流：Bearer 鉴权、命令受理 202、/v1/stream 订阅重放（10）
@@ -75,6 +76,7 @@ Linux：`cmake --preset linux-debug && cmake --build --preset linux-debug && cte
 | **存储重开** | SegmentStore 重开扫段重建链头，拒绝损坏链（05 §2） |
 | **API 最小集（10）** | Bearer 鉴权 + REST（auth/personas/sessions/messages/read/commands，幂等键重放、命令状态事件索引）+ WS /v1/stream（subscribe→重放→sync→实时、瞬态信令、慢消费者断开） |
 | **黄金 e2e：API 全链** | 真实 Beast 客户端：REST 全路由断言 + WS 订阅补齐/实时事件/信令广播（含自治角色发言入流） |
+| **配置面 config（M1-3）** | 配置即内容（Values 规范编码 → ContentId，行为归因粒度：同 id 同行为）；分层合并 platform→world→session→persona（下层覆盖上层）；平台包络承诺（写入越界拒绝写 denial + 合并端防御钳制，Identity/Output 槽位地板锁死、预算和超 1 等比缩回）；三级自调（人格类仅创建者 / 操作类创建者或 tune_self 授权 / world canon_lock 下层覆盖整体失效）；config.set 会话流事件化（热生效下一拍可见、recover 依序回放还原、decision.recorded 尾部附生效 ContentId）；提示板槽位预算参数化（SlotBudgets + 地板钳制） |
 | **配额 v1 + 网关完整（M1-2）** | 两层桶（突发 token-bucket + 体量固定窗）× 主体/世界双维（min 裁决 + 主体失败原子回滚）；预留-结算-释放（submit 预估预留 / 响应多退少补 / deadline 释放）；差异化耗尽语义（P0 硬失败 + P2/P3 拒绝走降级阶梯）；熔断器（滑窗失败率 → 开断，冷却期满半开单件探测恢复）；成本台账计数；饱和度闭环：τ_speak 随 max(队列水位, 配额水位) 上调——世界预算将尽角色群体性"今日话少"（黄金场景：预算见底自降不报错、窗口滚动自然恢复开口）；collect_silences 改显式接收生效 τ（饱和度上调后沉默裁决与决策同阈值） |
 | **记忆管线 memory（M1-1）** | 长期册 = 内容寻址候选 × 审阅覆盖（accept/edit/merge/delete/pin，归属校验）；召回规则（scope 隐私/时效两轴/码点相关性闸/打分排序）；确定性批化归纳（同流逐字节同候选）；重建协议（重跑归纳 → 指纹重挂覆盖，人工劳动永不丢失）；决策驱动 Memory 槽真召回 + board_manifest 可断言 |
 

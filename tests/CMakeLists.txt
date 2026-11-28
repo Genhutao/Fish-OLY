@@ -15,12 +15,14 @@ add_executable(oly_tests
     unit/test_identity_shard.cpp
     unit/test_memory_store.cpp
     unit/test_quota.cpp
+    unit/test_config.cpp
     golden/test_replay_seed.cpp
     golden/test_session_e2e.cpp
     golden/test_snapshot_replay.cpp
     golden/test_deliberation_e2e.cpp
     golden/test_memory_pipeline.cpp
     golden/test_quota_loop.cpp
+    golden/test_config_loop.cpp
     golden/test_host_smoke.cpp)
 target_compile_features(oly_tests PRIVATE cxx_std_20)
 target_link_libraries(oly_tests PRIVATE
@@ -34,6 +36,7 @@ target_link_libraries(oly_tests PRIVATE
     Oly::gateway
     Oly::memory
     Oly::quota
+    Oly::config
     Oly::session
     Oly::warnings
     Catch2::Catch2WithMain)

@@ -43,6 +43,7 @@ struct TickOutcome {
     std::string model;            // 非空 → 运行时记 decision.recorded（ScriptedDriver 不记）
     uint32_t tokens_in = 0;
     uint32_t tokens_out = 0;
+    ContentId config_id{};        // 生效配置 ContentId（08 §1：行为精确归因到参数值）
 };
 
 class AutonomyDriver {

@@ -49,6 +49,7 @@ Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, const 
     rt.snap_dir_ = deps.snapshot_dir;
     rt.identity_ = deps.identity;
     rt.on_commit_ = deps.on_commit;
+    rt.effective_ = config::finalize(config::Values{});
 
     // seq 0 = session.created（04 §3 流开篇；prev_hash = 创世常量）
     codec::Encoder p;
@@ -107,6 +108,12 @@ Result<SessionRuntime> SessionRuntime::recover(const domain::SessionId id, const
     rt.perceived_seq_ = rec->head_seq - 1;   // 锚内消息已在窗口中，后续增量才属新到
     for (const auto& cid : rec->command_ids) rt.seen_.insert(cid);
 
+    // 配置即内容（08 §1）：补丁依序回放 → 生效配置还原（确定性叙事完整）
+    rt.session_values_ = config::Values{};
+    for (const auto& raw : rec->config_patches) {
+        rt.session_values_ = config::apply(rt.session_values_, config::decode_patch(raw));
+    }
+    rt.effective_ = config::finalize(rt.session_values_);
     rt.wheel_->insert(SessionRuntime::key(id), now_ms + rt.tick_period_ms_);
     return rt;
 }
@@ -201,6 +208,7 @@ std::size_t SessionRuntime::on_tick(const uint64_t now_ms) {
                 p.u32(oc.tokens_out);
                 p.u32(q4(oc.attention));
                 p.u32(q4(oc.tau));
+                p.content(oc.config_id.bytes);   // 08 §1：行为精确归因到参数值（尾部追加，读端向前兼容）
                 emit_fact(events::EventKind::Fact, tick_cmd, "decision.recorded",
                           std::move(p).take());
             }
@@ -255,6 +263,11 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
                     ? domain::check(*identity_, *s, domain::Action::SendMessage, cmd.actor)
                     : domain::check(*registry_, domain::Action::SendMessage, id_, cmd.actor);
             break;
+        case CmdAction::ConfigSet:
+            d = identity_ != nullptr && s != nullptr
+                    ? domain::check(*identity_, *s, domain::Action::ConfigSet, cmd.actor)
+                    : domain::check(*registry_, domain::Action::ConfigSet, id_, cmd.actor);
+            break;
         case CmdAction::Tick:
             d = Decision::ok();   // 系统事件（调度器来源）
             break;
@@ -294,6 +307,31 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
                 }
             }
             break;
+        case CmdAction::ConfigSet: {
+            // 配置即内容（08 §1）：补丁 → 包络裁决（越界拒绝写 denial）→ 应用 → 事件
+            const auto patch = config::decode_patch(cmd.config_patch);
+            if (patch.empty()) {
+                codec::Encoder p;
+                p.text("config:decode");
+                emit_fact(events::EventKind::Denied, cmd, "cmd.denied", std::move(p).take());
+                return 0;
+            }
+            const auto candidate = config::apply(session_values_, patch);
+            const auto clamped = config::clamp(candidate, config::Envelope{});
+            if (!(candidate == clamped)) {
+                // 包络是承诺不是默认值：越界拒绝（历史 blob 越界由合并端钳制兜底）
+                codec::Encoder p;
+                p.text("config:envelope");
+                emit_fact(events::EventKind::Denied, cmd, "cmd.denied", std::move(p).take());
+                return 0;
+            }
+            session_values_ = clamped;
+            effective_ = config::finalize(session_values_);
+            // 变更即命令事件：config.set 落会话流（载荷 = 补丁规范编码）→ 重放还原
+            emit_fact(events::EventKind::Fact, cmd, "config.set",
+                      config::encode_patch(patch));
+            return 0;
+        }
         case CmdAction::Tick:
             break;   // 拍本身无事实
     }

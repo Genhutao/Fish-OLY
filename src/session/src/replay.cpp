@@ -1,5 +1,6 @@
 #include "oly/session/replay.hpp"
 
+#include "oly/config/config.hpp"
 #include "oly/codec/codec.hpp"
 
 #include <limits>
@@ -32,6 +33,10 @@ Result<Recovered> recover(logdb::SegmentStore& store, const std::optional<Snapsh
             r.messages.emplace_back(seq, text);
             r.perceived.push_back(PerceivedMessage{seq, domain::PrincipalId::from_bytes(actor),
                                                    r.messages.back().second});
+        }
+        if (e.type == "config.set") {
+            // 配置即内容（08 §1）：补丁事件依序折叠 → 重放自动还原历史配置
+            r.config_patches.push_back(e.payload_bin);
         }
         if (e.tick > r.ticks) r.ticks = e.tick;
         if (!e.command.is_nil()) r.command_ids.push_back(e.command);

@@ -66,6 +66,20 @@ TickOutcome DeliberationDriver::degrade() {
 TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
     TickOutcome oc;
 
+    // ── 配置热生效（08 §1）：每拍从生效配置同步运行面参数 ──────────
+    if (cfg_.effective != nullptr) {
+        const auto& v = cfg_.effective->values;
+        cfg_.score.tau_base = v.tau_base;
+        cfg_.score.max_decisions = v.max_decisions;
+        cfg_.score.hard_cooldown = v.hard_cooldown;
+        cfg_.sat_gain = v.sat_gain;
+        cfg_.recall_limit = v.recall_topk;
+        cfg_.weights = session::AttentionWeights{
+            v.weights.mention, v.weights.topic, v.weights.relation, v.weights.reciprocity,
+            v.weights.novelty, v.weights.urgency, v.weights.base_cost, v.weights.streak_k};
+        oc.config_id = cfg_.effective->content_id;   // 08 §1：行为归因到参数值
+    }
+
     // ── 每拍状态推进（疲惫恢复 / 冷却衰减）────────────────────────
     energy_ = std::min(1.0f, energy_ + 0.05f);
     if (cooldown_ > 0) --cooldown_;

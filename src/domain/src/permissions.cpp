@@ -75,6 +75,12 @@ Decision check_impl(const Src& src, const Session& s, const Action action, const
             }
             return Decision::ok();
 
+        case Action::ConfigSet:
+            if (!chain) {
+                if (const auto d = require_member(s, actor, SessionRole::Admin); !d.allow) return d;
+            }
+            return Decision::ok();
+
         case Action::Rollback:
             if (!chain && s.owner != actor) return Decision::deny("rollback is owner-only");
             return Decision::ok();

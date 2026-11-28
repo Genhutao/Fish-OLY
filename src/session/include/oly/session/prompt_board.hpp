@@ -54,10 +54,20 @@ struct Assembled {
     BoardManifest manifest;
 };
 
-// 总预算 = context_tokens × 0.8（06 §3.0 预留系数）；各槽位比例固定表起步（08 可覆盖）。
+// 槽位预算比例（06 §3.0 默认表；比例属配置面 08——限内滑动，Identity/Output
+// 地板为平台包络，任何配置层不可越：装配端防御性强制地板）。
+struct SlotBudgets {
+    std::array<float, kSlotCount> share{0.12f, 0.13f, 0.08f, 0.25f, 0.22f, 0.08f, 0.12f};
+};
+constexpr float kFloorIdentity = 0.12f;
+constexpr float kFloorOutput = 0.12f;
+constexpr float kSlotMax = 0.60f;
+
+// 总预算 = context_tokens × 0.8（06 §3.0 预留系数）；budgets 参数 = 配置面覆盖点。
 // 确定性：同输入逐字节同输出。
 Assembled assemble_board(std::size_t context_tokens, const SlotInput& in,
-                         const TokenEstimator& est = {});
+                         const TokenEstimator& est = {},
+                         const SlotBudgets& budgets = {});
 
 // 渲染为单一 prompt 文本（M0 形态；M1 升格为结构化消息序列，槽位次序不变）。
 // 空槽位跳过；槽位次序固定 = Identity → Canon → State → Memory → Recent → Skills → Output。

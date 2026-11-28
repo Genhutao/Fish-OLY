@@ -6,16 +6,15 @@
 namespace oly::session {
 namespace {
 
-// 槽位预算比例（06 §3.0 表；比例属配置面 08，Identity/Output 地板为平台包络）
-constexpr float kSlotRatio[kSlotCount] = {
-    0.12f,   // Identity
-    0.13f,   // Canon
-    0.08f,   // State
-    0.25f,   // Memory
-    0.22f,   // Recent
-    0.08f,   // Skills
-    0.12f,   // Output
-};
+// 槽位预算钳制（08 §2：包络是承诺——限内滑动，Identity/Output 地板锁死）
+SlotBudgets clamp_budgets(SlotBudgets b) {
+    for (auto& x : b.share) x = std::clamp(x, 0.0f, kSlotMax);
+    b.share[static_cast<std::size_t>(Slot::Identity)] =
+        std::max(b.share[static_cast<std::size_t>(Slot::Identity)], kFloorIdentity);
+    b.share[static_cast<std::size_t>(Slot::Output)] =
+        std::max(b.share[static_cast<std::size_t>(Slot::Output)], kFloorOutput);
+    return b;
+}
 
 }   // namespace
 
@@ -77,17 +76,18 @@ std::string join(const auto& items) {
 }   // namespace
 
 Assembled assemble_board(const std::size_t context_tokens, const SlotInput& in,
-                         const TokenEstimator& est) {
+                         const TokenEstimator& est, const SlotBudgets& budgets_in) {
     TokenEstimator count = est;
     if (!count) count = [](const std::string_view s) { return estimate_tokens_heuristic(s); };
 
     Assembled b;
     BoardManifest& m = b.manifest;
     m.budget = static_cast<std::size_t>(static_cast<float>(context_tokens) * 0.8f);
+    const auto budgets = clamp_budgets(budgets_in);
     const auto budget_of = [&](const Slot s) noexcept {
         return std::max<std::size_t>(
             1, static_cast<std::size_t>(static_cast<float>(m.budget) *
-                                        kSlotRatio[static_cast<std::size_t>(s)]));
+                                        budgets.share[static_cast<std::size_t>(s)]));
     };
 
     // ── 地板/高优槽：整块放入，永不截断（06 §3.0）──────────────────

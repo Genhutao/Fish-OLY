@@ -25,6 +25,7 @@ struct Recovered {
     std::vector<std::pair<uint64_t, std::string>> messages;   // 事实投影
     std::vector<PerceivedMessage> perceived;                  // 感知缓冲（驱动窗口用）
     std::vector<CommandId> command_ids;                       // 幂等集重建
+    std::vector<std::vector<std::byte>> config_patches;       // config.set 补丁（seq 序，08 §1）
 };
 
 // store：本会话段存储（读端全链校验）。snap 为空 → 从创世全量重放。
