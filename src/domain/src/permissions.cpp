@@ -76,6 +76,7 @@ Decision check_impl(const Src& src, const Session& s, const Action action, const
             return Decision::ok();
 
         case Action::ConfigSet:
+        case Action::RecallMessage:
             if (!chain) {
                 if (const auto d = require_member(s, actor, SessionRole::Admin); !d.allow) return d;
             }

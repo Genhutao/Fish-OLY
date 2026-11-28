@@ -3,6 +3,7 @@
 #include "oly/config/config.hpp"
 #include "oly/codec/codec.hpp"
 
+#include <algorithm>
 #include <limits>
 
 namespace oly::session {
@@ -35,9 +36,61 @@ Result<Recovered> recover(logdb::SegmentStore& store, const std::optional<Snapsh
                                                    r.messages.back().second});
         }
         if (e.type == "config.set") {
-            // 配置即内容（08 §1）：补丁事件依序折叠 → 重放自动还原历史配置
-            r.config_patches.push_back(e.payload_bin);
+            // 配置即内容（08 §1）：补丁事件依序折叠 → 重放自动还原历史配置；
+            // (seq, patch) 标签使回滚可剔除 superseded 区间的补丁
+            r.config_patches.emplace_back(e.seq, e.payload_bin);
         }
+        if (e.type == "director.injected") {
+            // 注入走正常感知（11 §3）：恢复时与消息同构折叠
+            codec::Decoder d(e.payload_bin);
+            (void)d.text();   // kind（narration/ambient）
+            const auto text = d.text();
+            if (d.ok()) {
+                r.messages.emplace_back(e.seq, text);
+                r.perceived.push_back(PerceivedMessage{e.seq, domain::PrincipalId::from_bytes(e.actor.bytes()), text});
+            }
+        }
+        if (e.type == "message.recalled") {
+            codec::Decoder d(e.payload_bin);
+            r.recalled_seqs.insert(d.u64());
+        }
+        if (e.type == "director.paused" || e.type == "director.resumed") {
+            codec::Decoder d(e.payload_bin);
+            const auto mode = d.text();
+            r.paused = e.type == "director.paused";
+            r.frozen = r.paused && mode == "full";
+        }
+        if (e.type == "session.rolled_back") {
+            // 回滚 = 投影层时间线重置（11 §4）：superseded 区间保留日志、不进投影
+            codec::Decoder d(e.payload_bin);
+            const auto target = d.u64();
+            r.superseded_from = d.u64();
+            const auto cut_pair = [&](auto& vec) {   // messages: (seq, text)
+                vec.erase(std::remove_if(vec.begin(), vec.end(),
+                                         [&](const auto& m) { return m.first > target; }),
+                          vec.end());
+            };
+            const auto cut_pm = [&](auto& vec) {     // perceived: PerceivedMessage.seq
+                vec.erase(std::remove_if(vec.begin(), vec.end(),
+                                         [&](const auto& m) { return m.seq > target; }),
+                          vec.end());
+            };
+            cut_pair(r.messages);
+            cut_pm(r.perceived);
+            r.config_patches.erase(std::remove_if(r.config_patches.begin(),
+                                                  r.config_patches.end(),
+                                                  [&](const auto& cp) {
+                                                      return cp.first > target;
+                                                  }),
+                                   r.config_patches.end());
+            std::erase_if(r.recalled_seqs, [&](const auto& sq) { return sq > target; });
+            r.tick_seq.erase(std::remove_if(r.tick_seq.begin(), r.tick_seq.end(),
+                                            [&](const auto& ts) { return ts.second > target; }),
+                             r.tick_seq.end());
+            r.ticks = 0;
+            for (const auto [t, seq] : r.tick_seq) r.ticks = std::max(r.ticks, t);
+        }
+        r.tick_seq.emplace_back(e.tick, e.seq);
         if (e.tick > r.ticks) r.ticks = e.tick;
         if (!e.command.is_nil()) r.command_ids.push_back(e.command);
     }

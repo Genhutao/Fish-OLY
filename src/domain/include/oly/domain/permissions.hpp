@@ -17,6 +17,7 @@ enum class Action : uint8_t {
     DirectorControl, // Admin+（pause/step/inject/schedule，11 §1）
     Rollback,        // Owner（11 §1）
     ConfigSet,       // Admin+（会话级配置，08 §2）；包络钳制在准入点执行
+    RecallMessage,   // Admin+（message.recall 标记式撤回，04 §2；作者自撤 M2 放宽）
     EditCard,        // 卡片所有权链（角色自改走显式授权边，M1 接入 grants）
 };
 

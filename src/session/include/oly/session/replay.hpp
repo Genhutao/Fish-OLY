@@ -12,6 +12,7 @@
 #include "oly/session/snapshot.hpp"
 
 #include <cstdint>
+#include <unordered_set>
 #include <optional>
 #include <string>
 #include <utility>
@@ -25,7 +26,12 @@ struct Recovered {
     std::vector<std::pair<uint64_t, std::string>> messages;   // 事实投影
     std::vector<PerceivedMessage> perceived;                  // 感知缓冲（驱动窗口用）
     std::vector<CommandId> command_ids;                       // 幂等集重建
-    std::vector<std::vector<std::byte>> config_patches;       // config.set 补丁（seq 序，08 §1）
+    std::vector<std::pair<uint64_t, std::vector<std::byte>>> config_patches;   // (seq, patch)，08 §1
+    std::unordered_set<uint64_t> recalled_seqs;               // message.recalled 标记集（04 §2）
+    std::vector<std::pair<uint64_t, uint64_t>> tick_seq;      // (tick, seq) 轨迹（回滚重算 ticks）
+    uint64_t superseded_from = 0;                             // 回滚水位（11 §4；0 = 未回滚）
+    bool paused = false;                                      // director.paused（11 §2）
+    bool frozen = false;                                      // pause full（只读冻结）
 };
 
 // store：本会话段存储（读端全链校验）。snap 为空 → 从创世全量重放。

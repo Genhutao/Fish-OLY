@@ -110,11 +110,16 @@ Result<SessionRuntime> SessionRuntime::recover(const domain::SessionId id, const
 
     // 配置即内容（08 §1）：补丁依序回放 → 生效配置还原（确定性叙事完整）
     rt.session_values_ = config::Values{};
-    for (const auto& raw : rec->config_patches) {
+    for (const auto& [seq, raw] : rec->config_patches) {
+        (void)seq;
         rt.session_values_ = config::apply(rt.session_values_, config::decode_patch(raw));
     }
     rt.effective_ = config::finalize(rt.session_values_);
-    rt.wheel_->insert(SessionRuntime::key(id), now_ms + rt.tick_period_ms_);
+    rt.recalled_ = std::move(rec->recalled_seqs);
+    rt.superseded_from_ = rec->superseded_from;
+    rt.paused_ = rec->paused;
+    rt.frozen_ = rec->frozen;
+    if (!rt.paused_) rt.wheel_->insert(SessionRuntime::key(id), now_ms + rt.tick_period_ms_);
     return rt;
 }
 
@@ -213,8 +218,8 @@ std::size_t SessionRuntime::on_tick(const uint64_t now_ms) {
                           std::move(p).take());
             }
         }
-        // 自续拍：下一拍登记（暂停 = remove，导演 11 §2）
-        wheel_->insert(key(id_), now_ms + tick_period_ms_);
+        // 自续拍：下一拍登记（暂停 = 摘除不登记，导演 11 §2；resume/step 回填）
+        if (!paused_) wheel_->insert(key(id_), now_ms + tick_period_ms_);
     return produced;
 }
 
@@ -268,6 +273,24 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
                     ? domain::check(*identity_, *s, domain::Action::ConfigSet, cmd.actor)
                     : domain::check(*registry_, domain::Action::ConfigSet, id_, cmd.actor);
             break;
+        case CmdAction::DirectorPause:
+        case CmdAction::DirectorResume:
+        case CmdAction::DirectorStep:
+        case CmdAction::DirectorInject:
+            d = identity_ != nullptr && s != nullptr
+                    ? domain::check(*identity_, *s, domain::Action::DirectorControl, cmd.actor)
+                    : domain::check(*registry_, domain::Action::DirectorControl, id_, cmd.actor);
+            break;
+        case CmdAction::DirectorRollback:
+            d = identity_ != nullptr && s != nullptr
+                    ? domain::check(*identity_, *s, domain::Action::Rollback, cmd.actor)
+                    : domain::check(*registry_, domain::Action::Rollback, id_, cmd.actor);
+            break;
+        case CmdAction::RecallMessage:
+            d = identity_ != nullptr && s != nullptr
+                    ? domain::check(*identity_, *s, domain::Action::RecallMessage, cmd.actor)
+                    : domain::check(*registry_, domain::Action::RecallMessage, id_, cmd.actor);
+            break;
         case CmdAction::Tick:
             d = Decision::ok();   // 系统事件（调度器来源）
             break;
@@ -284,6 +307,13 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
     uint64_t produced = 0;
     switch (cmd.action) {
         case CmdAction::SendMessage: {
+            if (frozen_) {
+                // pause(full) = 只读冻结（11 §2）：拒绝一切用户命令准入，denial 可审计
+                codec::Encoder p;
+                p.text("director:frozen");
+                emit_fact(events::EventKind::Denied, cmd, "cmd.denied", std::move(p).take());
+                return 0;
+            }
             codec::Encoder p;
             p.ulid(cmd.actor.bytes());
             p.text(cmd.text);
@@ -330,6 +360,116 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
             // 变更即命令事件：config.set 落会话流（载荷 = 补丁规范编码）→ 重放还原
             emit_fact(events::EventKind::Fact, cmd, "config.set",
                       config::encode_patch(patch));
+            return 0;
+        }
+        case CmdAction::DirectorPause:
+            paused_ = true;
+            frozen_ = cmd.text == "full";   // mode 复用 text："autonomy"（默认）| "full"
+            emit_fact(events::EventKind::Fact, cmd, "director.paused", [&] {
+                codec::Encoder p;
+                p.text(frozen_ ? "full" : "autonomy");
+                return std::move(p).take();
+            }());
+            return 0;
+        case CmdAction::DirectorResume:
+            paused_ = false;
+            frozen_ = false;
+            // 槽位回填，虚拟时钟从暂停点继续（不补拍，11 §2；合成拍钟 = 拍号 × 周期）
+            emit_fact(events::EventKind::Fact, cmd, "director.resumed", {});
+            wheel_->insert(key(id_), (ticks_ + 1) * tick_period_ms_);
+            return 0;
+        case CmdAction::DirectorStep: {
+            // 手动投 n 拍（11 §2）：拍完维持暂停——单步调试与逐帧推演基础
+            uint64_t produced_steps = 0;
+            const auto n = std::clamp<uint64_t>(cmd.read_seq, 1, 16);
+            emit_fact(events::EventKind::Fact, cmd, "director.step", [&] {
+                codec::Encoder p;
+                p.u32(static_cast<uint32_t>(n));
+                return std::move(p).take();
+            }());
+            for (uint64_t i = 0; i < n; ++i) {
+                // 合成拍钟（确定性）：拍号 × 周期；paused 下 on_tick 不自续登记
+                (void)on_tick(ticks_ * tick_period_ms_ + tick_period_ms_);
+                ++produced_steps;
+            }
+            return 0;
+        }
+        case CmdAction::DirectorInject: {
+            // 注入走正常感知-估分（11 §3）：角色可反应可沉默——导演推剧情，
+            // 角色仍按人设行动；绝不伪装成角色发言（source=director 独立事实）
+            codec::Encoder p;
+            p.text(cmd.director_kind.empty() ? std::string{"narration"} : cmd.director_kind);
+            p.text(cmd.text);
+            emit_fact(events::EventKind::Fact, cmd, "director.injected", std::move(p).take());
+            if (auto* s2 = registry_->session(id_); s2 != nullptr) {
+                s2->messages.emplace_back(s2->head_seq - 1, cmd.text);
+                perceived_.push_back(PerceivedMessage{s2->head_seq - 1, cmd.actor, cmd.text});
+                if (perceived_.size() > kPerceiveWindow) perceived_.erase(perceived_.begin());
+            }
+            return 1;
+        }
+        case CmdAction::DirectorRollback: {
+            // 回滚协议（11 §4）：日志不可变 → 投影层时间线重置（快照+重放同一份代码）
+            const uint64_t target = cmd.read_seq;
+            if (target == 0 || target >= store_->committed_seq().value_or(0)) {
+                codec::Encoder p;
+                p.text("rollback:target-out-of-range");
+                emit_fact(events::EventKind::Denied, cmd, "cmd.denied", std::move(p).take());
+                return 0;
+            }
+            const auto kept = store_->read_range(0, target + 1);
+            if (!kept) return unexpected(kept.error());
+            uint64_t max_tick = 0;
+            for (const auto& e : kept.value()) max_tick = std::max(max_tick, e.tick);
+            ticks_ = max_tick;
+            superseded_from_ = target + 1;   // 有效时间线 = rolled_back 之后；seq 单调不复用
+            // 投影重置：消息/感知仅保留 ≤ target（superseded 保留在日志中可审计可考古）
+            const domain::Session* sk = registry_->session(id_);
+            if (sk != nullptr) {
+                auto& msgs = registry_->session(id_)->messages;
+                msgs.erase(std::remove_if(msgs.begin(), msgs.end(),
+                                          [&](const auto& m) { return m.first > target; }),
+                           msgs.end());
+            }
+            perceived_.erase(std::remove_if(perceived_.begin(), perceived_.end(),
+                                            [&](const PerceivedMessage& m) {
+                                                return m.seq > target;
+                                            }),
+                             perceived_.end());
+            emit_fact(events::EventKind::Fact, cmd, "session.rolled_back", [&] {
+                codec::Encoder p;
+                p.u64(target);
+                p.u64(target + 1);
+                p.u64(kept.value().back().seq + 1);   // at_seq：回滚事实自身将占用的位点
+                return std::move(p).take();
+            }());
+            return 0;
+        }
+        case CmdAction::RecallMessage: {
+            // message.recall（04 §2）：撤回 = 标记事实，不删除（append-only 纪律）
+            const uint64_t seq = cmd.read_seq;
+            const bool exists = seq != 0 && seq < registry_->session(id_)->head_seq &&
+                                std::any_of(registry_->session(id_)->messages.begin(),
+                                            registry_->session(id_)->messages.end(),
+                                            [&](const auto& m) { return m.first == seq; });
+            if (!exists) {
+                codec::Encoder p;
+                p.text("recall:seq-not-a-message");
+                emit_fact(events::EventKind::Denied, cmd, "cmd.denied", std::move(p).take());
+                return 0;
+            }
+            recalled_.insert(seq);
+            // 感知窗口同步剔除（撤回后角色不再引用）
+            perceived_.erase(std::remove_if(perceived_.begin(), perceived_.end(),
+                                            [&](const PerceivedMessage& m) {
+                                                return m.seq == seq;
+                                            }),
+                             perceived_.end());
+            emit_fact(events::EventKind::Fact, cmd, "message.recalled", [&] {
+                codec::Encoder p;
+                p.u64(seq);
+                return std::move(p).take();
+            }());
             return 0;
         }
         case CmdAction::Tick:

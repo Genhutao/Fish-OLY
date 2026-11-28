@@ -27,7 +27,18 @@
 
 namespace oly::session {
 
-enum class CmdAction : uint8_t { SendMessage = 1, Tick = 2, AdvanceRead = 3, ConfigSet = 4 };
+enum class CmdAction : uint8_t {
+    SendMessage = 1,
+    Tick = 2,
+    AdvanceRead = 3,
+    ConfigSet = 4,
+    DirectorPause = 5,     // mode: autonomy | full（text 字段携带 "autonomy"/"full"）
+    DirectorResume = 6,    // 槽位回填，不补拍（11 §2）
+    DirectorStep = 7,      // 手动投 n 拍（read_seq 携带 n；paused 下可用）
+    DirectorInject = 8,    // narration/ambient 注入（text 携带文本；正常感知-估分，11 §3）
+    DirectorRollback = 9,  // 投影层时间线重置（read_seq 携带 target_seq；11 §4）
+    RecallMessage = 10,    // message.recall 标记式撤回（read_seq 携带撤回 seq，04 §2）
+};
 
 struct Command {
     CommandId id;
@@ -38,6 +49,8 @@ struct Command {
     std::string text;                      // SendMessage payload
     uint64_t read_seq = 0;                 // AdvanceRead：推进读游标目标（10 §4.3）
     std::vector<std::byte> config_patch;   // ConfigSet：配置补丁规范编码（08 §1）
+    // 导演/撤回面（11）：mode 复用 text；n/seq/target 复用 read_seq；注入文本复用 text
+    std::string director_kind;             // DirectorInject：narration | ambient（scene_event M2）
 };
 
 // 感知缓冲窗口上限（非事实态，重放可重建；超限从头淘汰）
@@ -108,6 +121,14 @@ public:
     // 生效配置（08 §1）：platform 基线 × 会话层补丁；config.set 热生效（下一拍可见）
     const config::Effective& effective() const noexcept { return effective_; }
 
+    // 导演状态（11）：paused = 轮式摘除（角色不自主，交互准入不变）；full = 只读冻结
+    bool paused() const noexcept { return paused_; }
+    bool frozen() const noexcept { return frozen_; }
+    // 撤回标记集（04 §2：标记式，不删除；API 层过滤展示）
+    const std::unordered_set<uint64_t>& recalled_seqs() const noexcept { return recalled_; }
+    // 回滚水位（11 §4）：superseded_from = target+1；0 = 从未回滚
+    uint64_t superseded_from() const noexcept { return superseded_from_; }
+
     // 会话键（轮式调度器/路由表使用；ULID 前 8 字节）
     static uint64_t key(domain::SessionId id) noexcept;
 
@@ -134,6 +155,10 @@ private:
     std::function<void(const std::vector<events::EventEnvelope>&)> on_commit_;
     config::Values session_values_{};    // 会话层解析值（config.set 依序应用；重放还原）
     config::Effective effective_{};      // 生效配置（含包络钳制 + 内容寻址 id）
+    bool paused_ = false;                // 导演暂停（autonomy；full 见 frozen_）
+    bool frozen_ = false;                // 只读冻结（pause full）
+    std::unordered_set<uint64_t> recalled_;   // message.recalled 标记集
+    uint64_t superseded_from_ = 0;            // 回滚水位（11 §4）
 };
 
 }   // namespace oly::session
