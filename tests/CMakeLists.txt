@@ -9,8 +9,13 @@ add_executable(oly_tests
     unit/test_lane_queue.cpp
     unit/test_loop_pool.cpp
     unit/test_session_router.cpp
+    unit/test_scoring.cpp
+    unit/test_prompt_board.cpp
+    unit/test_gateway.cpp
     golden/test_replay_seed.cpp
-    golden/test_session_e2e.cpp)
+    golden/test_session_e2e.cpp
+    golden/test_snapshot_replay.cpp
+    golden/test_deliberation_e2e.cpp)
 target_compile_features(oly_tests PRIVATE cxx_std_20)
 target_link_libraries(oly_tests PRIVATE
     Oly::core
@@ -19,6 +24,7 @@ target_link_libraries(oly_tests PRIVATE
     Oly::logdb
     Oly::exec
     Oly::domain
+    Oly::gateway
     Oly::session
     Oly::warnings
     Catch2::Catch2WithMain)

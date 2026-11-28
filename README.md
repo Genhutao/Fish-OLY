@@ -14,8 +14,8 @@ oly-engine/
 │   ├── logdb/            段存储：批次组帧、CRC、滚动、读校验（05 §2–3）
 │   ├── exec/             执行内核：loop 池、轮式调度、两车道队列、路由表（01）
 │   ├── domain/           领域内核：主体/卡片/会话/权限（02）
-│   ├── session/          会话运行时：准入/幂等/自治驱动/落盘（04 §5、05 §3）
-│   ├── gateway/          （M1）模型网关
+│   ├── session/          会话运行时：准入/幂等/估分/提示板/决策/快照重放（04 §5、05–06）
+│   ├── gateway/          模型网关：Provider 接口、优先级车道、确定性 Fake（07）
 │   └── app/              oly 可执行入口（sanity）
 └── tests/
     ├── unit/             各模块单元测试
@@ -53,7 +53,13 @@ Linux：`cmake --preset linux-debug && cmake --build --preset linux-debug && cte
 | **执行内核 exec** | loop 池（thread-per-core）、中央轮式 tick 调度器（过期插入/溢出表/摘槽）、两车道有界队列、会话路由表（白名单 rwlock）（01） |
 | **领域内核 domain** | 主体/卡片版本链/会话成员注册表 + 三源权限检查（所有权链超集/会话层级/可见性）（02 §6） |
 | **会话运行时 session** | 准入协议（幂等→权限→应用→事实）、脚本自治驱动、一拍一批落盘、黄金场景 e2e（04/05/06） |
+| **估分内核 scoring** | 确定性注意力（种子化噪声）、阈值校准/硬冷却、沉默事件化采样（06 §2） |
+| **提示板 prompt_board** | 槽位预算制、Identity/Output 地板、降级序 Memory→Recent→Skills、board_manifest（06 §3.0） |
+| **模型网关 gateway** | LLMProvider 适配器接口 + 确定性 FakeProvider、P0–P3 车道（背压/削减）、deadline 回收（07） |
+| **决策驱动 deliberation** | 感知→估分→装配→网关→speak；语气储备降级阶梯；decision.recorded/autonomy.silent 事件（06 §3） |
+| **快照与启动重放** | snap 锚 + 补缺口 recover；存储重启续链；幂等集跨重启重建；损坏快照回退旧锚（05 §5–6） |
 | 黄金回放种子 | 写 → 读 → 确定性折叠断言框架 |
 | **黄金场景 e2e** | 单会话两角色 30 轮脚本对话：seq 连续/哈希链读校验/幂等恰一次/拒绝审计/重放投影一致 |
+| **黄金场景：重启不丢世界** | 快照+重放续演至 30 轮 ≡ 无快照全量重放；确定性闸门（同输入事件流逐字节一致） |
 
-下一步（13 §4 M0 收尾）：快照与启动重放接入会话运行时 → 提示板与 LLM 网关雏形 → 30 轮黄金场景升格为自主生成（自治引擎 M1）。
+下一步（13 §4 M0 收尾）：多 loop + 身份分片 → API 最小集（auth/sessions/messages/WS 流，10）→ 1k 会话冒烟 p99 < 50ms。

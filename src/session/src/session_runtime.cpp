@@ -2,8 +2,11 @@
 
 #include "oly/domain/permissions.hpp"
 #include "oly/core/hash.hpp"
+#include "oly/session/replay.hpp"
+#include "oly/session/snapshot.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <utility>
 
@@ -14,6 +17,14 @@ using oly::domain::Decision;
 using oly::domain::DomainRegistry;
 using oly::domain::SessionRole;
 
+namespace {
+
+uint32_t q4(const float v) noexcept {   // 定点 4 位小数（attention/tau 入事实载荷）
+    return static_cast<uint32_t>(std::max(0.0f, v) * 10000.0f);
+}
+
+}   // namespace
+
 uint64_t SessionRuntime::key(const domain::SessionId id) noexcept {
     uint64_t k = 0;
     for (std::size_t i = 0; i < 8; ++i) {
@@ -22,7 +33,7 @@ uint64_t SessionRuntime::key(const domain::SessionId id) noexcept {
     return k;
 }
 
-Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, Deps deps,
+Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, const Deps deps,
                                               const uint64_t now_ms) {
     const domain::Session* s = deps.registry.session(id);
     if (s == nullptr) return unexpected(err("session:not-found", "session missing in registry"));
@@ -33,6 +44,7 @@ Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, Deps d
     rt.store_ = &deps.store;
     rt.wheel_ = &deps.wheel;
     rt.tick_period_ms_ = deps.tick_period_ms;
+    rt.snap_dir_ = deps.snapshot_dir;
 
     // seq 0 = session.created（04 §3 流开篇；prev_hash = 创世常量）
     codec::Encoder p;
@@ -50,7 +62,45 @@ Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, Deps d
     }
     rt.pending_facts_.clear();
 
+    // 感知游标 = "seq ≤ 游标者已消费"；create 时所有消息（seq ≥ 1）都是新到
+    rt.perceived_seq_ = rt.registry_->session(id)->head_seq - 1;
     // 登记首拍：wheel 到期 → advance_clock 重排下一拍（自续）
+    rt.wheel_->insert(SessionRuntime::key(id), now_ms + rt.tick_period_ms_);
+    return rt;
+}
+
+Result<SessionRuntime> SessionRuntime::recover(const domain::SessionId id, const Deps deps,
+                                               const uint64_t now_ms) {
+    const domain::Session* s = deps.registry.session(id);
+    if (s == nullptr) return unexpected(err("session:not-found", "session missing in registry"));
+
+    // 快照（05 §5）：目录未启用/无快照 → nullopt → 全量重放
+    Result<std::optional<SnapshotData>> snap = std::optional<SnapshotData>{};
+    if (!deps.snapshot_dir.empty()) {
+        snap = load_latest_snapshot(deps.snapshot_dir);
+        if (!snap) return unexpected(snap.error());
+    }
+
+    auto rec = session::recover(deps.store, snap.value());
+    if (!rec) return unexpected(rec.error());
+
+    // 灌事实侧投影（canon/成员由调用方按身份域先行装配）
+    domain::Session* s2 = deps.registry.session(id);
+    s2->head_seq = rec->head_seq;
+    s2->messages = std::move(rec->messages);
+
+    SessionRuntime rt;
+    rt.id_ = id;
+    rt.registry_ = &deps.registry;
+    rt.store_ = &deps.store;
+    rt.wheel_ = &deps.wheel;
+    rt.tick_period_ms_ = deps.tick_period_ms;
+    rt.snap_dir_ = deps.snapshot_dir;
+    rt.ticks_ = rec->ticks;
+    rt.perceived_ = std::move(rec->perceived);
+    rt.perceived_seq_ = rec->head_seq - 1;   // 锚内消息已在窗口中，后续增量才属新到
+    for (const auto& cid : rec->command_ids) rt.seen_.insert(cid);
+
     rt.wheel_->insert(SessionRuntime::key(id), now_ms + rt.tick_period_ms_);
     return rt;
 }
@@ -83,31 +133,72 @@ std::size_t SessionRuntime::advance_clock(const uint64_t now_ms) {
     for (const auto due_key : wheel_->advance(now_ms)) {
         if (due_key != key(id_)) continue;   // 轮式调度器按 loop 共享：只处理本会话的到期键
         ++ticks_;
+        const auto* s = registry_->session(id_);
+
+        // 感知装配（06 §2：感知输入 = 事实事件与 tick）
+        TickContext ctx;
+        ctx.tick = ticks_;
+        ctx.stream_key = key(id_);
+        ctx.registry = registry_;
+        ctx.session = s;
+        if (!perceived_.empty()) {
+            const auto w = std::min<std::size_t>(kPerceiveWindow, perceived_.size());
+            ctx.window = std::span(perceived_).last(w);
+            std::size_t begin = 0;
+            while (begin < perceived_.size() && perceived_[begin].seq <= perceived_seq_) ++begin;
+            ctx.new_messages = std::span(perceived_).subspan(begin);
+        }
+        perceived_seq_ = s->head_seq;   // 本拍感知消费至当前事实头
+
+        const Command tick_cmd{CommandId{}, s->owner, s->owner, CmdAction::Tick, ticks_, {}};
         for (auto& [persona, driver] : drivers_) {
-            auto line = driver->on_tick(ticks_);
-            if (!line) continue;   // 沉默也是行动（06 §2.4）：不产生命令即不写事件
-            Command c;
-            c.id = CommandId::from_bytes(
-                [this, persona] {   // 确定性命令 ID：hash(stream, tick, persona) —— 重放可复现
-                    oly::codec::Encoder e;
-                    e.u64(key(id_));
-                    e.u64(ticks_);
-                    e.ulid(persona.bytes());
-                    const ContentId h = sha256(e.span());
-                    std::array<std::byte, 16> out{};
-                    std::copy(h.bytes.begin(), h.bytes.begin() + 16, out.begin());
-                    return out;
-                }());
-            c.actor = persona;
-            if (const domain::Principal* pr = registry_->principal(persona);
-                pr != nullptr) {
-                c.on_behalf_of = pr->owner;
+            auto oc = driver->on_tick(ctx);
+            if (oc.speak) {
+                Command c;
+                c.id = CommandId::from_bytes(
+                    [this, persona] {   // 确定性命令 ID：hash(stream, tick, persona) —— 重放可复现
+                        oly::codec::Encoder e;
+                        e.u64(key(id_));
+                        e.u64(ticks_);
+                        e.ulid(persona.bytes());
+                        const ContentId h = sha256(e.span());
+                        std::array<std::byte, 16> out{};
+                        std::copy(h.bytes.begin(), h.bytes.begin() + 16, out.begin());
+                        return out;
+                    }());
+                c.actor = persona;
+                if (const domain::Principal* pr = registry_->principal(persona); pr != nullptr) {
+                    c.on_behalf_of = pr->owner;
+                }
+                c.action = CmdAction::SendMessage;
+                c.tick = ticks_;
+                c.text = std::move(oc.text);
+                enqueue_background(std::move(c));
+                ++produced;
             }
-            c.action = CmdAction::SendMessage;
-            c.tick = ticks_;
-            c.text = std::move(*line);
-            enqueue_background(std::move(c));
-            ++produced;
+            // 沉默事件化（06 §2.4）：被@沉默必记 / borderline 采样
+            if (oc.silence_noted) {
+                codec::Encoder p;
+                p.ulid(persona.bytes());
+                p.u32(q4(oc.attention));
+                p.u32(q4(oc.tau));
+                emit_fact(events::EventKind::Notification, tick_cmd, "autonomy.silent",
+                          std::move(p).take());
+            }
+            // decision.recorded（06 §3 第 5 步雏形；ScriptedDriver 无 model 不记）
+            if (!oc.model.empty()) {
+                codec::Encoder p;
+                p.ulid(persona.bytes());
+                p.text(oc.model);
+                p.u8(oc.speak ? 1 : 0);
+                p.u8(oc.fallback ? 1 : 0);
+                p.u32(oc.tokens_in);
+                p.u32(oc.tokens_out);
+                p.u32(q4(oc.attention));
+                p.u32(q4(oc.tau));
+                emit_fact(events::EventKind::Fact, tick_cmd, "decision.recorded",
+                          std::move(p).take());
+            }
         }
         // 自续拍：下一拍登记（暂停 = remove，导演 11 §2）
         wheel_->insert(key(id_), now_ms + tick_period_ms_);
@@ -164,6 +255,10 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
             if (auto* s = registry_->session(id_); s != nullptr) {
                 s->messages.emplace_back(s->head_seq - 1, cmd.text);   // 投影更新
                 if (auto* m = s->member(cmd.actor); m != nullptr) m->read_seq = s->head_seq - 1;
+                // 感知缓冲（驱动窗口输入；非事实态，重放可重建）
+                perceived_.push_back(
+                    PerceivedMessage{s->head_seq - 1, cmd.actor, cmd.text});
+                if (perceived_.size() > kPerceiveWindow) perceived_.erase(perceived_.begin());
             }
             break;
         }
@@ -190,6 +285,15 @@ Result<uint64_t> SessionRuntime::drain(const std::size_t max_items) {
         pending_facts_.clear();
     }
     return facts;
+}
+
+Result<ContentId> SessionRuntime::snapshot_now() const {
+    if (snap_dir_.empty()) return unexpected(err("session:snapshot-off", "snapshot dir not set"));
+    SnapshotData s;
+    s.seq = committed_seq();
+    s.ticks = ticks_;
+    if (const auto* sess = registry_->session(id_); sess != nullptr) s.messages = sess->messages;
+    return write_snapshot(snap_dir_, s);
 }
 
 }   // namespace oly::session

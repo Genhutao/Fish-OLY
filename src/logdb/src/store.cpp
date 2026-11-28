@@ -46,6 +46,115 @@ uint32_t read_file_index(const std::filesystem::path& p) {
     return v;
 }
 
+struct SegCloser {
+    void operator()(std::FILE* f) const noexcept {
+        if (f != nullptr) std::fclose(f);
+    }
+};
+
+struct CheckedSeg {
+    std::FILE* f = nullptr;
+    uint64_t start_seq = 0;
+};
+
+// 打开段文件并校验段头（magic / 版本 / 流清单 / CRC），回填段起始 seq。
+// 成功时 f 非空、所有权移交调用方；open() 与 read_range() 共用（05 §2 段头契约唯一）。
+Result<CheckedSeg> open_segment_checked(const std::filesystem::path& path,
+                                        const events::StreamRef& stream) {
+    CheckedSeg out;
+    std::unique_ptr<std::FILE, SegCloser> f(std::fopen(path.string().c_str(), "rb"));
+    if (f == nullptr) return unexpected(err("logdb:io", "cannot open segment: " + path.string()));
+
+    std::vector<std::byte> hbuf(kHeaderSize);
+    if (std::fread(hbuf.data(), 1, hbuf.size(), f.get()) != hbuf.size()) {
+        return unexpected(err("logdb:corrupt", "truncated segment header"));
+    }
+    codec::Decoder hd(hbuf);
+    if (std::memcmp(hd.raw(8).data(), kMagic, 8) != 0) {
+        return unexpected(err("logdb:corrupt", "bad segment magic: " + path.string()));
+    }
+    if (hd.u16() != kFormatVer) return unexpected(err("logdb:corrupt", "unsupported format version"));
+    if (static_cast<events::StreamKind>(hd.u8()) != stream.kind) {
+        return unexpected(err("logdb:corrupt", "segment kind mismatch"));
+    }
+    if (hd.ulid() != stream.id) return unexpected(err("logdb:corrupt", "segment stream mismatch"));
+    out.start_seq = hd.u64();
+    const uint32_t stored_crc = hd.u32();
+    codec::Encoder hb;
+    hb.raw(std::span<const std::byte>(hbuf).first(kHeaderSize - 4));
+    if (crc32c(hb.span()) != stored_crc) return unexpected(err("logdb:corrupt", "header crc mismatch"));
+
+    out.f = f.release();
+    return out;
+}
+
+std::vector<std::filesystem::path> list_segments(const std::filesystem::path& dir) {
+    std::vector<std::filesystem::path> segs;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.is_regular_file() && entry.path().extension() == ".log") segs.push_back(entry.path());
+    }
+    if (ec) segs.clear();
+    std::sort(segs.begin(), segs.end(), [](const auto& a, const auto& b) {
+        return read_file_index(a) < read_file_index(b);
+    });
+    return segs;
+}
+
+struct ChainHead {
+    uint64_t start_seq = 0;
+    uint64_t last_seq = 0;
+    ContentId prev_hash;
+    uint32_t last_index = 0;
+};
+
+// 前置声明：批次读取定义在本文件后部（open() 的续链扫描先于此使用）
+using BatchRecords = std::optional<std::vector<std::vector<std::byte>>>;
+Result<BatchRecords> read_batch_records(std::FILE* f);
+
+// 扫描既有段重建链头（05 §6 启动路径）：全链校验，任何损坏即拒——
+// 写端不跨损坏续写（残批丢弃/截尾修复属恢复矩阵，交由运维显式决策）。
+Result<std::optional<ChainHead>> scan_existing(const std::filesystem::path& dir,
+                                               const events::StreamRef& stream) {
+    const auto segs = list_segments(dir);
+    if (segs.empty()) return std::optional<ChainHead>{};   // 全新流
+
+    ChainHead h;
+    ContentId prev = events::genesis_prev_hash;
+    uint64_t expect = 0;
+    bool first = true;
+    for (const auto& path : segs) {
+        auto seg = open_segment_checked(path, stream);
+        if (!seg) return unexpected(seg.error());
+        std::unique_ptr<std::FILE, SegCloser> f(seg.value().f);
+        if (first) {
+            h.start_seq = seg.value().start_seq;
+            expect = h.start_seq;
+            first = false;
+        } else if (seg.value().start_seq != expect) {
+            return unexpected(err("logdb:corrupt", "segment start discontinuity at " + path.string()));
+        }
+        while (true) {
+            auto batch = read_batch_records(f.get());
+            if (!batch) return unexpected(batch.error());
+            if (!batch.value().has_value()) break;   // 干净 EOF，进下一段
+            for (const auto& wire : batch.value().value()) {
+                auto env = events::decode_envelope(wire);
+                if (!env) return unexpected(env.error());
+                if (env.value().seq != expect || env.value().prev_hash != prev) {
+                    return unexpected(err("logdb:corrupt", "chain/seq discontinuity at seq " +
+                                                                 std::to_string(expect)));
+                }
+                prev = env.value().hash;
+                h.last_seq = expect++;
+            }
+        }
+    }
+    h.prev_hash = prev;
+    h.last_index = read_file_index(segs.back());
+    return h;
+}
+
 codec::Encoder header_bytes(const events::StreamRef& stream, const uint64_t seg_start_seq) {
     codec::Encoder e;
     e.raw({reinterpret_cast<const std::byte*>(kMagic), 8});
@@ -118,9 +227,27 @@ Result<SegmentStore> SegmentStore::open(const std::filesystem::path& dir,
     SegmentStore s;
     s.dir_ = dir;
     s.stream_ = stream;
-    s.start_seq_ = start_seq;
-    s.head_seq_ = start_seq;
     s.opts_ = options;
+
+    // 既有段 → 续链（05 §6：启动重放的前提；调用方传 start_seq 必须与流创世一致）
+    auto scan = scan_existing(dir, stream);
+    if (!scan) return unexpected(scan.error());
+    if (scan.value().has_value()) {
+        const auto& h = scan.value().value();
+        if (start_seq != h.start_seq) {
+            return unexpected(err("logdb:seq-mismatch",
+                                  "stream exists with start_seq " + std::to_string(h.start_seq) +
+                                      ", caller passed " + std::to_string(start_seq)));
+        }
+        s.start_seq_ = h.start_seq;
+        s.head_seq_ = h.last_seq + 1;
+        s.prev_hash_ = h.prev_hash;
+        s.committed_ = h.last_seq;
+        s.cur_index_ = h.last_index;   // 后续滚动从下一序号起
+    } else {
+        s.start_seq_ = start_seq;
+        s.head_seq_ = start_seq;
+    }
     return s;
 }
 
@@ -204,46 +331,16 @@ Result<void> SegmentStore::append(const std::span<events::EventEnvelope> batch) 
 
 Result<std::vector<events::EventEnvelope>> SegmentStore::read_range(const uint64_t from_seq,
                                                                     const std::size_t limit) const {
-    // 枚举段文件并按序号排序
-    std::vector<std::filesystem::path> segs;
-    std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(dir_, ec)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".log") segs.push_back(entry.path());
-    }
-    if (ec) return unexpected(err("logdb:io", ec.message()));
-    std::sort(segs.begin(), segs.end(), [](const auto& a, const auto& b) {
-        return read_file_index(a) < read_file_index(b);
-    });
-
     // 从段首走全链：创世 → 逐条 prev/seq 校验（读端完整性优先于读取速度）
     ContentId prev = events::genesis_prev_hash;
     uint64_t expect_seq = start_seq_;
     std::vector<events::EventEnvelope> out;
     out.reserve(std::min(limit, std::size_t{64}));
 
-    for (const auto& path : segs) {
-        const std::unique_ptr<std::FILE, FileCloser> f(std::fopen(path.string().c_str(), "rb"));
-        if (f == nullptr) return unexpected(err("logdb:io", "cannot open segment: " + path.string()));
-
-        // 段头校验
-        std::vector<std::byte> hbuf(kHeaderSize);
-        if (std::fread(hbuf.data(), 1, hbuf.size(), f.get()) != hbuf.size()) {
-            return unexpected(err("logdb:corrupt", "truncated segment header"));
-        }
-        codec::Decoder hd(hbuf);
-        if (std::memcmp(hd.raw(8).data(), kMagic, 8) != 0) {
-            return unexpected(err("logdb:corrupt", "bad segment magic: " + path.string()));
-        }
-        if (hd.u16() != kFormatVer) return unexpected(err("logdb:corrupt", "unsupported format version"));
-        if (static_cast<events::StreamKind>(hd.u8()) != stream_.kind) {
-            return unexpected(err("logdb:corrupt", "segment kind mismatch"));
-        }
-        if (hd.ulid() != stream_.id) return unexpected(err("logdb:corrupt", "segment stream mismatch"));
-        /* seg_start_seq */ (void)hd.u64();
-        const uint32_t stored_crc = hd.u32();
-        codec::Encoder hb;
-        hb.raw(std::span<const std::byte>(hbuf).first(kHeaderSize - 4));
-        if (crc32c(hb.span()) != stored_crc) return unexpected(err("logdb:corrupt", "header crc mismatch"));
+    for (const auto& path : list_segments(dir_)) {
+        auto seg = open_segment_checked(path, stream_);
+        if (!seg) return unexpected(seg.error());
+        const std::unique_ptr<std::FILE, FileCloser> f(seg.value().f);
 
         // 批次循环
         while (out.size() < limit) {

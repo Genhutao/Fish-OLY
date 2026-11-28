@@ -38,6 +38,7 @@ add_subdirectory(src/core)
 add_subdirectory(src/codec)
 add_subdirectory(src/events)
 add_subdirectory(src/logdb)
+add_subdirectory(src/gateway)
 add_subdirectory(src/app)
 
 # ── exec：执行内核（boost-asio；依赖就绪时启用）─────────────────────────
