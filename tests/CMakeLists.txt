@@ -13,10 +13,12 @@ add_executable(oly_tests
     unit/test_prompt_board.cpp
     unit/test_gateway.cpp
     unit/test_identity_shard.cpp
+    unit/test_memory_store.cpp
     golden/test_replay_seed.cpp
     golden/test_session_e2e.cpp
     golden/test_snapshot_replay.cpp
     golden/test_deliberation_e2e.cpp
+    golden/test_memory_pipeline.cpp
     golden/test_host_smoke.cpp)
 target_compile_features(oly_tests PRIVATE cxx_std_20)
 target_link_libraries(oly_tests PRIVATE
@@ -28,6 +30,7 @@ target_link_libraries(oly_tests PRIVATE
     Oly::domain
     Oly::identity
     Oly::gateway
+    Oly::memory
     Oly::session
     Oly::warnings
     Catch2::Catch2WithMain)

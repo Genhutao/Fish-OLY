@@ -135,7 +135,28 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
         in.output = "以「" + std::string{name.empty() ? "角色" : name} +
                     "」的口吻，输出一句符合场景的中文短句；只输出台词本身。";
 
+        // ── Memory 槽（06 §3.0 ← 02 §5.3 召回规则）：长期册无锁召回 ────
+        //   scope=(本角色, 在座主体) 分册；query = 最新感知文本；at_seq = 最新感知位点
+        //   （valid 时效）；写端独立单写者（归纳/审阅），读端 atomic 快照。
+        if (cfg_.memory != nullptr && ctx.session != nullptr && !ctx.window.empty()) {
+            std::vector<domain::PrincipalId> members;
+            members.reserve(ctx.session->members.size());
+            for (const auto& m : ctx.session->members) members.push_back(m.principal);
+            const auto view = cfg_.memory->view();
+            if (view != nullptr && !members.empty()) {
+                const auto& query = ctx.new_messages.empty() ? ctx.window.back().text
+                                                             : ctx.new_messages.back().text;
+                std::vector<memory::Recalled> hits;
+                view->recall(persona_, members, query, ctx.window.back().seq, cfg_.recall_limit,
+                             hits);
+                for (auto& h : hits) {
+                    in.memory.emplace_back(static_cast<float>(h.importance), std::move(h.content));
+                }
+            }
+        }
+
         const auto board = assemble_board(cfg_.context_tokens, in);
+        last_manifest_ = board.manifest;   // board_manifest（06 §3.0 可解释性）
         gateway::CompletionRequest req;
         req.priority = gateway::Priority::P2_Ambient;   // 自治发言：环境档（07 §2）
         req.prompt = render_prompt(board);

@@ -16,6 +16,7 @@ oly-engine/
 │   ├── domain/           领域内核：主体/卡片/会话/权限 + 身份快照（02）
 │   ├── identity/         身份分片：单写者执行器 + 原子快照发布（01 §1）
 │   ├── session/          会话运行时：准入/幂等/估分/提示板/决策/快照重放/多 loop 分片（04–06）
+│   ├── memory/           长期记忆：候选 × 审阅覆盖 × 召回 × 重建协议 + 确定性归纳器（02 §5/03 §6/06 §4）
 │   ├── gateway/          模型网关：Provider 接口、优先级车道、确定性 Fake、独立域（07）
 │   ├── api/              REST + WS 流：Bearer 鉴权、命令受理 202、/v1/stream 订阅重放（10）
 │   ├── log/              日志门面：OLY_LOG_* 宏（spdlog 后端，无 spdlog 时退化为 no-op）
@@ -73,5 +74,6 @@ Linux：`cmake --preset linux-debug && cmake --build --preset linux-debug && cte
 | **存储重开** | SegmentStore 重开扫段重建链头，拒绝损坏链（05 §2） |
 | **API 最小集（10）** | Bearer 鉴权 + REST（auth/personas/sessions/messages/read/commands，幂等键重放、命令状态事件索引）+ WS /v1/stream（subscribe→重放→sync→实时、瞬态信令、慢消费者断开） |
 | **黄金 e2e：API 全链** | 真实 Beast 客户端：REST 全路由断言 + WS 订阅补齐/实时事件/信令广播（含自治角色发言入流） |
+| **记忆管线 memory（M1-1）** | 长期册 = 内容寻址候选 × 审阅覆盖（accept/edit/merge/delete/pin，归属校验）；召回规则（scope 隐私/时效两轴/码点相关性闸/打分排序）；确定性批化归纳（同流逐字节同候选）；重建协议（重跑归纳 → 指纹重挂覆盖，人工劳动永不丢失）；决策驱动 Memory 槽真召回 + board_manifest 可断言 |
 
 M0 退出标准（13 §1）已齐备：API 最小集 + 1k 会话冒烟 + 全量测试绿。M0-3..M0-6 一并推送。

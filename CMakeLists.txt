@@ -52,6 +52,7 @@ endif()
 
 add_subdirectory(src/domain)
 add_subdirectory(src/identity)
+add_subdirectory(src/memory)
 add_subdirectory(src/session)
 add_subdirectory(src/api)
 
