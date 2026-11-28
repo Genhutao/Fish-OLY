@@ -2,6 +2,7 @@
 // 背景：/MDd 下 assert() 默认弹模态框、崩溃触发 WER 报告窗，会阻塞无人值守测试循环。
 // 通过全局静态对象在 main 之前完成配置；仅 Windows（其余平台默认已无窗）。
 #include <crtdbg.h>
+#include <cstdio>
 #include <cstdlib>
 #include <windows.h>
 
@@ -9,6 +10,10 @@ namespace {
 
 struct QuietDebugBootstrap {
     QuietDebugBootstrap() {
+        // CRT stdio 流上限：默认 512 个打开 FILE*，多会话冒烟（每会话一段文件句柄）
+        // 会在 ~509 处 fopen 失败；放宽到 CRT 上限
+        (void)_setmaxstdio(8192);
+
         // CRT 三类报告（警告/错误/断言）→ stderr + 调试通道，不再弹窗
         _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
         _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);

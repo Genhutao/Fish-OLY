@@ -50,6 +50,9 @@ public:
         exec::TickWheel& wheel;            // 所属 loop 的中央轮式调度器
         uint64_t tick_period_ms = 1000;    // 拍周期（配置面 08，M0 常量起步）
         std::filesystem::path snapshot_dir;   // 快照目录；空 = 快照禁用（05 §5）
+        // 身份域只读快照（01 §1 I3 例外）：非空 → 权限检查走无锁快照路径；
+        // 空 → 退回注册表直查（单 loop 单写者场景）。M1 随身份流事件刷新。
+        std::shared_ptr<const domain::IdentitySnapshot> identity;
     };
 
     // 创建：写 session.created（seq 0）并在轮式调度器登记首拍
@@ -70,8 +73,12 @@ public:
     // 背景/自治入口：满即丢（降级），幂等同样生效
     Enqueue enqueue_background(Command cmd);
 
-    // 调度推进（loop 线程调用）：wheel 到期 → 本会话拍 → 自治驱动产出命令入背景道
+    // 单会话一拍（宿主已从轮式摘槽，01 §2）：驱动询问 → 命令入背景道 → 自续登记。
     // 返回本拍产生的命令数
+    std::size_t on_tick(uint64_t now_ms);
+
+    // 调度推进（自管模式，loop 线程调用）：wheel 到期 → 本会话拍。
+    // 分片托管模式走 on_tick（轮式由分片统一摘槽，避免二次消费）。
     std::size_t advance_clock(uint64_t now_ms);
 
     // 挂接自治驱动（角色必须在会话中）
@@ -113,6 +120,7 @@ private:
     std::vector<PerceivedMessage> perceived_;   // 感知缓冲（最近 kPerceiveWindow 条）
     uint64_t perceived_seq_ = 0;                // 上一拍感知游标（新到消息的分界）
     std::filesystem::path snap_dir_;
+    std::shared_ptr<const domain::IdentitySnapshot> identity_;   // 身份快照（无锁权限源）
 };
 
 }   // namespace oly::session

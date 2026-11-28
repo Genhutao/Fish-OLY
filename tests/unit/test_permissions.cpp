@@ -6,6 +6,9 @@
 
 #include <oly/core/ulid.hpp>
 
+#include <array>
+#include <memory>
+
 using namespace oly;
 using namespace oly::domain;
 
@@ -96,4 +99,39 @@ TEST_CASE("RemoveMember 不能移除 Owner；SetRole 不能降级 Owner", "[doma
     REQUIRE_FALSE(check(w.reg, Action::RemoveMember, w.sid, w.root, w.root).allow);
     REQUIRE_FALSE(check(w.reg, Action::SetRole, w.sid, w.root, w.root, SessionRole::Member).allow);
     REQUIRE(check(w.reg, Action::RemoveMember, w.sid, w.root, w.persona).allow);
+}
+
+TEST_CASE("身份快照源与注册表源裁决等价（01 §1 只读内容路径）", "[domain][perm][snapshot]") {
+    World w;
+    const auto snap = std::make_shared<const IdentitySnapshot>(w.reg.identity_snapshot(1));
+    const Session* sess = w.reg.session(w.sid);
+    REQUIRE(snap->version == 1);
+    REQUIRE(snap->principals.size() == 3);
+
+    // 同一动作矩阵，两数据源逐项一致
+    struct Probe {
+        Action a;
+        PrincipalId actor, target;
+    };
+    const std::array<Probe, 6> probes{{
+        {Action::SendMessage, w.persona, {}},
+        {Action::SendMessage, w.stranger, {}},
+        {Action::TransferSession, w.root, w.stranger},
+        {Action::TransferSession, w.persona, w.stranger},
+        {Action::EditCard, w.root, w.persona},
+        {Action::EditCard, w.persona, w.persona},
+    }};
+    for (const auto& p : probes) {
+        CAPTURE(static_cast<int>(p.a));
+        const auto via_reg = check(w.reg, p.a, w.sid, p.actor, p.target);
+        const auto via_snap = check(*snap, *sess, p.a, p.actor, p.target);
+        REQUIRE(via_reg.allow == via_snap.allow);
+        REQUIRE(via_reg.reason == via_snap.reason);
+    }
+
+    // 链/可见性函数同样双源一致
+    REQUIRE(in_ownership_chain(w.reg, w.root, w.persona) ==
+            in_ownership_chain(*snap, w.root, w.persona));
+    REQUIRE(can_interact(w.reg, w.stranger, w.persona) ==
+            can_interact(*snap, w.stranger, w.persona));
 }

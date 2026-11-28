@@ -73,6 +73,7 @@ struct Session {
 };
 
 // ── 注册表：领域状态的唯一持有者（单写者域内使用；跨线程只读共享由上层保证）──
+struct IdentitySnapshot;
 class DomainRegistry {
 public:
     // 主体
@@ -92,6 +93,10 @@ public:
     Result<void> add_member(SessionId sid, PrincipalId who, SessionRole role);
     Result<void> set_role(SessionId sid, PrincipalId who, SessionRole role);
 
+    // 身份域只读快照（01 §1 I3 例外）：身份分片单写者在每次变更后发布，
+    // 会话 loop 经 atomic shared_ptr 无锁读取。version 随发布递增。
+    IdentitySnapshot identity_snapshot(uint64_t version) const;
+
     std::size_t principal_count() const noexcept { return principals_.size(); }
     std::size_t session_count() const noexcept { return sessions_.size(); }
 
@@ -104,10 +109,33 @@ private:
     static uint64_t key(const SessionId& id) noexcept;
 };
 
+// ── 身份域只读快照（01 §1：跨 loop 只有通道与只读版本化内容）────────────
+// 会话侧权限检查用它替代直接读注册表 → 零锁、零共享可变状态。
+struct IdentitySnapshot {
+    uint64_t version = 0;
+    std::unordered_map<uint64_t, Principal> principals;
+    std::unordered_map<uint64_t, Persona> personas;
+
+    const Principal* principal(PrincipalId id) const noexcept;
+    const Persona* persona(PrincipalId id) const noexcept;
+};
+
+// ULID 前 8 字节键（注册表/快照/会话键共用约定；PrincipalId/SessionId 通用）
+template <typename Tag>
+inline uint64_t ulid_key(const UlidId<Tag>& id) noexcept {
+    uint64_t k = 0;
+    for (std::size_t i = 0; i < 8; ++i) {
+        k = (k << 8) | std::to_integer<uint64_t>(id.bytes()[i]);
+    }
+    return k;
+}
+
 // 所有权链（02 §6 ①）：actor ∈ target 的创建链（含 target 自身）→ 全权
 bool in_ownership_chain(const DomainRegistry& reg, PrincipalId actor, PrincipalId target);
+bool in_ownership_chain(const IdentitySnapshot& snap, PrincipalId actor, PrincipalId target);
 
 // 可见性裁决（② Visibility 决定能否建立关系）：viewer 能否"看见"目标
 bool can_interact(const DomainRegistry& reg, PrincipalId viewer, PrincipalId target);
+bool can_interact(const IdentitySnapshot& snap, PrincipalId viewer, PrincipalId target);
 
 }   // namespace oly::domain

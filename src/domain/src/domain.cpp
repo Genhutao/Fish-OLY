@@ -31,21 +31,9 @@ const Member* Session::member(const PrincipalId p) const noexcept {
     return it == members.end() ? nullptr : &*it;
 }
 
-uint64_t DomainRegistry::key(const PrincipalId& id) noexcept {
-    uint64_t k = 0;
-    for (std::size_t i = 0; i < 8; ++i) {
-        k = (k << 8) | std::to_integer<uint64_t>(id.bytes()[i]);
-    }
-    return k;
-}
+uint64_t DomainRegistry::key(const PrincipalId& id) noexcept { return ulid_key(id); }
 
-uint64_t DomainRegistry::key(const SessionId& id) noexcept {
-    uint64_t k = 0;
-    for (std::size_t i = 0; i < 8; ++i) {
-        k = (k << 8) | std::to_integer<uint64_t>(id.bytes()[i]);
-    }
-    return k;
-}
+uint64_t DomainRegistry::key(const SessionId& id) noexcept { return ulid_key(id); }
 
 Result<void> DomainRegistry::add_principal(Principal p) {
     const uint64_t k = key(p.id);
@@ -129,13 +117,35 @@ Result<void> DomainRegistry::set_role(const SessionId sid, const PrincipalId who
     return {};
 }
 
-bool in_ownership_chain(const DomainRegistry& reg, const PrincipalId actor, const PrincipalId target) {
+IdentitySnapshot DomainRegistry::identity_snapshot(const uint64_t version) const {
+    IdentitySnapshot s;
+    s.version = version;
+    s.principals = principals_;
+    s.personas = personas_;
+    return s;
+}
+
+const Principal* IdentitySnapshot::principal(const PrincipalId id) const noexcept {
+    const auto it = principals.find(ulid_key(id));
+    return it == principals.end() ? nullptr : &it->second;
+}
+
+const Persona* IdentitySnapshot::persona(const PrincipalId id) const noexcept {
+    const auto it = personas.find(ulid_key(id));
+    return it == personas.end() ? nullptr : &it->second;
+}
+
+namespace {
+
+// 链/可见性对"注册表或快照"共用一份逻辑（两者暴露同形的 principal/persona 查询）
+template <typename Src>
+bool chain_impl(const Src& src, const PrincipalId actor, const PrincipalId target) {
     // 沿创建链向上：链上任一主体（含 target 自身）对 target 全权（I4 超集不变量）
     PrincipalId cur = target;
     constexpr int kMaxDepth = 32;   // 链深上限：防环（创建链构造上无环，此为防御）
     for (int depth = 0; depth < kMaxDepth; ++depth) {
         if (cur == actor) return true;
-        const Principal* p = reg.principal(cur);
+        const Principal* p = src.principal(cur);
         if (p == nullptr) return false;
         if (p->owner.is_nil()) return false;   // 链根（自身即根）仍不匹配
         cur = p->owner;
@@ -143,10 +153,11 @@ bool in_ownership_chain(const DomainRegistry& reg, const PrincipalId actor, cons
     return false;
 }
 
-bool can_interact(const DomainRegistry& reg, const PrincipalId viewer, const PrincipalId target) {
+template <typename Src>
+bool interact_impl(const Src& src, const PrincipalId viewer, const PrincipalId target) {
     if (viewer == target) return true;
-    if (in_ownership_chain(reg, viewer, target)) return true;
-    const Principal* t = reg.principal(target);
+    if (chain_impl(src, viewer, target)) return true;
+    const Principal* t = src.principal(target);
     if (t == nullptr) return false;
     switch (t->visibility) {
         case Visibility::Public:
@@ -158,6 +169,25 @@ bool can_interact(const DomainRegistry& reg, const PrincipalId viewer, const Pri
                    t->shared_with.end();
     }
     return false;
+}
+
+}   // namespace
+
+bool in_ownership_chain(const DomainRegistry& reg, const PrincipalId actor, const PrincipalId target) {
+    return chain_impl(reg, actor, target);
+}
+
+bool in_ownership_chain(const IdentitySnapshot& snap, const PrincipalId actor,
+                        const PrincipalId target) {
+    return chain_impl(snap, actor, target);
+}
+
+bool can_interact(const DomainRegistry& reg, const PrincipalId viewer, const PrincipalId target) {
+    return interact_impl(reg, viewer, target);
+}
+
+bool can_interact(const IdentitySnapshot& snap, const PrincipalId viewer, const PrincipalId target) {
+    return interact_impl(snap, viewer, target);
 }
 
 }   // namespace oly::domain

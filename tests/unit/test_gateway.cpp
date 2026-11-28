@@ -1,4 +1,5 @@
 // 网关基础通路（07）：优先级车道、P0 背压、P2/P3 削减、deadline 回收、确定性 FakeProvider
+#include <oly/gateway/domain.hpp>
 #include <oly/gateway/gateway.hpp>
 
 #include <catch2/catch_approx.hpp>
@@ -94,6 +95,23 @@ TEST_CASE("网关：饱和度水位", "[gateway]") {
     (void)gw.submit(make_req(Priority::P2_Ambient));                              // 第 5 条被丢弃
     REQUIRE(gw.counters().dropped_p2 == 1);
     REQUIRE(gw.saturation() == Catch::Approx(4.0f / 16.0f));   // 水位按已入队计
+}
+
+TEST_CASE("网关域：独立 loop 池托管（07 §1 域拆分就位）", "[gateway]") {
+    FakeProvider prov;
+    auto dom = Domain::create(prov, {}, {}).take();
+    auto& gw = dom.gateway();
+
+    const auto ref = gw.submit(make_req(Priority::P0_Interactive, "内容"));
+    REQUIRE(ref != 0);
+
+    dom.start();
+    const auto c = gw.pump(0);   // M0 同步通路（泵协程化属 M1）
+    REQUIRE(c.has_value());
+    REQUIRE(c->ok);
+    REQUIRE_FALSE(c->text.empty());   // 模板兜底出句
+    dom.stop();
+    REQUIRE(dom.gateway().counters().completed == 1);
 }
 
 TEST_CASE("FakeProvider：scripted 顺序 → 模板兜底 → fail_from 失败", "[gateway]") {

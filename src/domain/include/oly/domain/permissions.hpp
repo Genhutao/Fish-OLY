@@ -27,8 +27,14 @@ struct Decision {
     static Decision deny(std::string why) { return {false, std::move(why)}; }
 };
 
-// 各动作的检查入口（object 在参数中显式给出；ctx 预留配额/包络扩展位）
+// 各动作的检查入口（object 在参数中显式给出；ctx 预留配额/包络扩展位）。
+// 两个数据源等价：注册表（单写者域内直查）与身份快照（会话 loop 无锁读，01 §1）。
 Decision check(const DomainRegistry& reg, Action action, SessionId session, PrincipalId actor,
                PrincipalId target = PrincipalId{}, SessionRole new_role = SessionRole::Member);
+
+// 快照源：session 为会话侧投影（成员/属主属会话单写者域，不进身份快照）
+Decision check(const IdentitySnapshot& identity, const Session& session, Action action,
+               PrincipalId actor, PrincipalId target = PrincipalId{},
+               SessionRole new_role = SessionRole::Member);
 
 }   // namespace oly::domain

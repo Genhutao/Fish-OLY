@@ -7,13 +7,17 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <vector>
 
 namespace {
-boost::asio::awaitable<void> record_thread(std::vector<std::thread::id>& sink) {
-    sink.push_back(std::this_thread::get_id());
+boost::asio::awaitable<void> record_thread(std::vector<std::thread::id>& sink,
+                                           std::atomic<std::size_t>& done) {
+    sink.push_back(std::this_thread::get_id());   // loop 内单写
+    done.fetch_add(1, std::memory_order_relaxed);
     co_return;
 }
 }   // namespace
@@ -24,17 +28,22 @@ TEST_CASE("loop 池：协程在 worker 线程上执行，而非主线程", "[exe
     pool->start();
 
     const auto main_id = std::this_thread::get_id();
-    std::vector<std::thread::id> ran_on;
-    ran_on.reserve(4);
+    // 每 ctx 独立收集 + 原子完成计数（骨架期曾用共享 vector 轮询 size——并发
+    // push_back/size 读取是 UB，偶发 3==4）
+    std::array<std::vector<std::thread::id>, 2> ran_on;
+    std::atomic<std::size_t> done{0};
     for (int i = 0; i < 4; ++i) {
         auto& ctx = pool->at(i % 2);
-        boost::asio::co_spawn(ctx, record_thread(ran_on), boost::asio::detached);
+        boost::asio::co_spawn(ctx, record_thread(ran_on[i % 2], done), boost::asio::detached);
     }
 
-    // 等待任务完成（骨架期轮询；执行内核接入后由完成游标驱动）
-    for (int spin = 0; spin < 500 && ran_on.size() < 4; ++spin) std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    REQUIRE(ran_on.size() == 4);
-    for (const auto id : ran_on) REQUIRE(id != main_id);
+    for (int spin = 0; spin < 500 && done.load(std::memory_order_relaxed) < 4; ++spin) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE(done.load() == 4);
+    for (const auto& v : ran_on) {
+        for (const auto id : v) REQUIRE(id != main_id);
+    }
 
     pool->stop();
 }

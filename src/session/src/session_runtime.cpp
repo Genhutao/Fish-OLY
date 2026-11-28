@@ -45,6 +45,7 @@ Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, const 
     rt.wheel_ = &deps.wheel;
     rt.tick_period_ms_ = deps.tick_period_ms;
     rt.snap_dir_ = deps.snapshot_dir;
+    rt.identity_ = deps.identity;
 
     // seq 0 = session.created（04 §3 流开篇；prev_hash = 创世常量）
     codec::Encoder p;
@@ -96,6 +97,7 @@ Result<SessionRuntime> SessionRuntime::recover(const domain::SessionId id, const
     rt.wheel_ = &deps.wheel;
     rt.tick_period_ms_ = deps.tick_period_ms;
     rt.snap_dir_ = deps.snapshot_dir;
+    rt.identity_ = deps.identity;
     rt.ticks_ = rec->ticks;
     rt.perceived_ = std::move(rec->perceived);
     rt.perceived_seq_ = rec->head_seq - 1;   // 锚内消息已在窗口中，后续增量才属新到
@@ -128,12 +130,10 @@ void SessionRuntime::attach_autonomy(const domain::PrincipalId persona,
     drivers_.emplace_back(persona, std::move(driver));
 }
 
-std::size_t SessionRuntime::advance_clock(const uint64_t now_ms) {
+std::size_t SessionRuntime::on_tick(const uint64_t now_ms) {
     std::size_t produced = 0;
-    for (const auto due_key : wheel_->advance(now_ms)) {
-        if (due_key != key(id_)) continue;   // 轮式调度器按 loop 共享：只处理本会话的到期键
-        ++ticks_;
-        const auto* s = registry_->session(id_);
+    ++ticks_;
+    const auto* s = registry_->session(id_);
 
         // 感知装配（06 §2：感知输入 = 事实事件与 tick）
         TickContext ctx;
@@ -202,6 +202,15 @@ std::size_t SessionRuntime::advance_clock(const uint64_t now_ms) {
         }
         // 自续拍：下一拍登记（暂停 = remove，导演 11 §2）
         wheel_->insert(key(id_), now_ms + tick_period_ms_);
+    return produced;
+}
+
+std::size_t SessionRuntime::advance_clock(const uint64_t now_ms) {
+    // 自管模式：轮式到期 → 本会话拍（到期键每拍只消费一次——分片托管下
+    // 由 Shard::on_beat 统一摘槽后调 on_tick，不再走此路径）
+    std::size_t produced = 0;
+    for (const auto due_key : wheel_->advance(now_ms)) {
+        if (due_key == key(id_)) produced += on_tick(now_ms);
     }
     return produced;
 }
@@ -225,11 +234,15 @@ void SessionRuntime::emit_fact(const events::EventKind kind, const Command& cmd,
 
 Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
                                                  const exec::LaneQueue<Command>::Lane /*lane*/) {
-    // 准入（04 §5）：幂等已在入队过滤；此处权限 → 应用/拒绝
+    // 准入（04 §5）：幂等已在入队过滤；此处权限 → 应用/拒绝。
+    // 权限源双轨：身份快照（多 loop 无锁）或注册表（单 loop 单写者直查）
     Decision d;
+    auto* s = registry_->session(id_);
     switch (cmd.action) {
         case CmdAction::SendMessage:
-            d = domain::check(*registry_, domain::Action::SendMessage, id_, cmd.actor);
+            d = identity_ != nullptr && s != nullptr
+                    ? domain::check(*identity_, *s, domain::Action::SendMessage, cmd.actor)
+                    : domain::check(*registry_, domain::Action::SendMessage, id_, cmd.actor);
             break;
         case CmdAction::Tick:
             d = Decision::ok();   // 系统事件（调度器来源）
@@ -252,7 +265,7 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
             p.text(cmd.text);
             emit_fact(events::EventKind::Fact, cmd, "message.appended", std::move(p).take());
             ++produced;
-            if (auto* s = registry_->session(id_); s != nullptr) {
+            if (s != nullptr) {
                 s->messages.emplace_back(s->head_seq - 1, cmd.text);   // 投影更新
                 if (auto* m = s->member(cmd.actor); m != nullptr) m->read_seq = s->head_seq - 1;
                 // 感知缓冲（驱动窗口输入；非事实态，重放可重建）

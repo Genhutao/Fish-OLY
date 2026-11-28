@@ -4,6 +4,7 @@ if(MSVC)
 endif()
 target_sources(oly_session PRIVATE
     src/session_runtime.cpp
+    src/shard.cpp
     src/scoring.cpp
     src/prompt_board.cpp
     src/deliberation.cpp
