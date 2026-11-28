@@ -142,6 +142,7 @@ std::size_t SessionRuntime::on_tick(const uint64_t now_ms) {
         // 感知装配（06 §2：感知输入 = 事实事件与 tick）
         TickContext ctx;
         ctx.tick = ticks_;
+        ctx.now_ms = now_ms;
         ctx.stream_key = key(id_);
         ctx.registry = registry_;
         ctx.session = s;

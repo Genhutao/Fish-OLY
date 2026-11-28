@@ -39,6 +39,7 @@ add_subdirectory(src/core)
 add_subdirectory(src/codec)
 add_subdirectory(src/events)
 add_subdirectory(src/logdb)
+add_subdirectory(src/quota)
 add_subdirectory(src/gateway)
 add_subdirectory(src/app)
 

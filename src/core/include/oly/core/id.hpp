@@ -27,6 +27,14 @@ public:
     const Ulid::Bytes& bytes() const noexcept { return bytes_; }
     std::string str() const { return encode_ulid(bytes_); }
     bool is_nil() const noexcept { return bytes_ == Ulid::Bytes{}; }
+    // 64 位桶键（前 8 字节 LE）：配额/路由等键控表的派生键
+    uint64_t key() const noexcept {
+        uint64_t k = 0;
+        for (std::size_t i = 0; i < 8; ++i) {
+            k |= static_cast<uint64_t>(std::to_integer<uint8_t>(bytes_[i])) << (8 * i);
+        }
+        return k;
+    }
 
     friend bool operator==(const UlidId&, const UlidId&) = default;
     friend auto operator<=>(const UlidId&, const UlidId&) = default;
@@ -60,6 +68,15 @@ struct ContentId {
 
     bool is_nil() const noexcept { return bytes == std::array<std::byte, 32>{}; }
     std::string str() const;   // 64 位小写 hex
+
+    // 64 位桶键（前 8 字节 LE）：世界预算等键控表的派生键
+    uint64_t key() const noexcept {
+        uint64_t k = 0;
+        for (std::size_t i = 0; i < 8; ++i) {
+            k |= static_cast<uint64_t>(std::to_integer<uint8_t>(bytes[i])) << (8 * i);
+        }
+        return k;
+    }
 
     friend bool operator==(const ContentId&, const ContentId&) = default;
     friend auto operator<=>(const ContentId&, const ContentId&) = default;

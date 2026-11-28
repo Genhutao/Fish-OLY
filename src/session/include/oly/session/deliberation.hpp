@@ -30,6 +30,10 @@ struct DeliberationConfig {
     std::size_t window_size = 8;       // Recent 槽取最近 N 条
     const memory::Store* memory = nullptr;   // 长期召回源（空 = Memory 槽缺席）
     std::size_t recall_limit = 4;      // Memory 槽召回上限（06 §3.0 超预算按分截）
+    // ── 饱和度反馈闭环（07 §4：自治频率是控制变量，不是静态参数）────
+    quota::Ledger* quota_ledger = nullptr;   // 配额册（空 = 旁路；硬墙在网关）
+    ContentId world_ref{};                   // 世界内容键（世界预算第二维度，09 §2）
+    float sat_gain = 0.5f;                   // τ_speak 随饱和度上调增益：预算将尽 → 群体"今日话少"
 };
 
 class DeliberationDriver final : public AutonomyDriver {

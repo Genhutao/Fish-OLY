@@ -69,23 +69,100 @@ Completion FakeProvider::complete(const CompletionRequest& req) {
     return c;
 }
 
-Gateway::Gateway(LLMProvider& provider, const Caps caps) : provider_(provider), caps_(caps) {}
+Gateway::Gateway(LLMProvider& provider, const Caps caps, quota::Ledger* ledger)
+    : provider_(provider), ledger_(ledger), caps_(caps) {}
 
-uint64_t Gateway::submit(CompletionRequest req) {
+bool Gateway::admit_by_breaker(const uint64_t now_ms, bool& probe) {
+    probe = false;
+    if (breaker_ == State::Closed) return true;
+    // 冷却期满 → 半开：放行单件探测（07 §5 半开探测恢复）
+    if (breaker_ == State::Open &&
+        now_ms - opened_at_ms_ >= caps_.breaker.cooldown_ms) {
+        breaker_ = State::HalfOpen;
+    }
+    if (breaker_ == State::HalfOpen) {
+        if (probe_in_flight_) return false;   // 探测件在途：其余请求仍拒
+        probe = true;
+        probe_in_flight_ = true;
+        return true;
+    }
+    return false;
+}
+
+void Gateway::record_outcome(const bool ok, const uint64_t now_ms) {
+    if (breaker_ == State::HalfOpen) {
+        probe_in_flight_ = false;
+        if (ok) {
+            breaker_ = State::Closed;   // 探测成功 → 闭合，滑窗重置
+            outcomes_.clear();
+        } else {
+            breaker_ = State::Open;   // 探测失败 → 重新熔断，新冷却
+            opened_at_ms_ = now_ms;
+        }
+        return;
+    }
+    outcomes_.push_back(ok);
+    while (outcomes_.size() > caps_.breaker.window) outcomes_.pop_front();
+    if (breaker_ != State::Open && outcomes_.size() == caps_.breaker.window) {
+        std::size_t fails = 0;
+        for (const auto o : outcomes_) {
+            if (!o) ++fails;
+        }
+        if (static_cast<double>(fails) / static_cast<double>(outcomes_.size()) >=
+            caps_.breaker.fail_ratio) {
+            breaker_ = State::Open;
+            opened_at_ms_ = now_ms;
+            ++c_.breaker_openings;
+            outcomes_.clear();
+        }
+    }
+}
+
+uint64_t Gateway::submit(CompletionRequest req, const uint64_t now_ms) {
     const auto lane = static_cast<std::size_t>(req.priority);
+
+    // ── 熔断闸（07 §5）：开期内 P2/P3 直接拒；P0/P1 仍过（会话侧降级兜底，
+    //    P0 永不丢）；半开探测件单件放行 ─────────────────────────────
+    bool probe = false;
+    if (!admit_by_breaker(now_ms, probe)) {
+        if (lane <= 1) return 0;   // P0/P1 过闸进供应商（失败走降级阶梯）
+        (lane == 2 ? c_.dropped_p2 : c_.dropped_p3) += 1;
+        ++c_.breaker_dropped;
+        return 0;
+    }
+
+    // ── 车道容量（07 §2）─────────────────────────────────────────
     if (lane <= 1) {
         if (lanes_[lane].size() >= caps_.lane_depth[lane]) {
-            ++c_.rejected_hi;   // P0 永不丢：满即拒绝（调用方限流/退避），07 §2
+            ++c_.rejected_hi;   // P0 永不丢：满即拒绝（调用方限流/退避）
             return 0;
         }
     } else {
         if (lanes_[lane].size() >= caps_.lane_depth[lane]) {
-            (lane == 2 ? c_.dropped_p2 : c_.dropped_p3) += 1;   // 挤兑自底向上削减
+            (lane == 2 ? c_.dropped_p2 : c_.dropped_p3) += 1;
             return 0;
         }
     }
+
+    // ── 配额硬墙（09 §3.2 预留-结算；09 §5 差异化耗尽语义）─────────
+    double estimate = 0.0;
+    if (ledger_ != nullptr &&
+        (req.on_behalf_of.key() != 0 || req.world_ref.key() != 0)) {
+        estimate = static_cast<double>(rough_tokens(req.prompt)) + req.max_tokens;
+        const auto v = ledger_->reserve(now_ms, req.on_behalf_of.key(), req.world_ref.key(),
+                                        estimate);
+        if (v.code != quota::Verdict::Code::Ok) {
+            if (lane <= 1) {
+                ++c_.quota_rejected;   // P0 硬失败（quota_exhausted 结构化错误原料）
+            } else {
+                ++c_.quota_dropped;   // P2/P3：不硬停，会话侧降级阶梯接管
+            }
+            return 0;
+        }
+    }
+
     const auto ref = next_ref_++;
-    lanes_[lane].emplace_back(ref, std::move(req));
+    lanes_[lane].push_back(Entry{ref, std::move(req), estimate, probe});
     ++c_.submitted;
     return ref;
 }
@@ -93,33 +170,49 @@ uint64_t Gateway::submit(CompletionRequest req) {
 std::optional<Completion> Gateway::pump(const uint64_t now_ms) {
     for (auto& lane : lanes_) {
         if (lane.empty()) continue;
-        auto [ref, req] = std::move(lane.front());
+        auto entry = std::move(lane.front());
         lane.pop_front();
 
         Completion c;
-        c.request_ref = ref;
+        c.request_ref = entry.ref;
         c.provider = provider_.name();
-        if (req.deadline_ms != 0 && now_ms >= req.deadline_ms) {
-            // 到期回收：失败应答，预留随之释放（无悬挂占用，07 §3）
+        if (entry.req.deadline_ms != 0 && now_ms >= entry.req.deadline_ms) {
+            // 到期回收：失败应答，预留随 deadline 释放（无悬挂占用，07 §3）
             ++c_.expired;
+            if (ledger_ != nullptr && entry.estimate > 0.0) {
+                ledger_->release(entry.req.on_behalf_of.key(), entry.req.world_ref.key(),
+                                 entry.estimate);
+            }
+            if (entry.probe) record_outcome(false, now_ms);
             c.ok = false;
             c.error = "gateway:deadline";
             return c;
         }
-        c = provider_.complete(req);
-        c.request_ref = ref;
+        c = provider_.complete(entry.req);
+        c.request_ref = entry.ref;
         c.provider = provider_.name();
         if (c.ok) {
             ++c_.completed;
+            c_.tokens_in_total += c.tokens_in;
+            c_.tokens_out_total += c.tokens_out;
         } else {
             ++c_.failed;
         }
+        // 结算：真实用量多退少补（09 §3.2；少补容忍小幅透支）
+        if (ledger_ != nullptr && entry.estimate > 0.0) {
+            ledger_->settle(now_ms, entry.req.on_behalf_of.key(), entry.req.world_ref.key(),
+                            entry.estimate,
+                            static_cast<double>(c.tokens_in) + c.tokens_out);
+        }
+        // 熔断滑窗只记供应商结果（deadline 不算供应商失败）
+        record_outcome(c.ok, now_ms);
         return c;
     }
     return std::nullopt;
 }
 
 float Gateway::saturation() const noexcept {
+    if (breaker_ != State::Closed) return 1.0f;   // 熔断开期 = 全饱和（07 §4 反馈上调）
     std::size_t cap = 0;
     for (std::size_t i = 0; i < 4; ++i) cap += caps_.lane_depth[i];
     if (cap == 0) return 1.0f;

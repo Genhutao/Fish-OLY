@@ -61,8 +61,8 @@ std::vector<Scored> score(const AttentionWeights& w, const ScoreConfig& cfg, uin
 
 // 沉默事件化采样（06 §2.4）：被@却沉默必记；borderline 带 [0.6τ, τ) 10% 采样。
 // 返回应记沉默的候选下标（确定性：同输入同结果）。
-std::vector<uint32_t> collect_silences(const ScoreConfig& cfg, uint64_t stream_key, uint64_t tick,
+std::vector<uint32_t> collect_silences(uint64_t stream_key, uint64_t tick,
                                        std::span<const float> scores,
-                                       std::span<const float> mentioned);
+                                       std::span<const float> mentioned, float tau);
 
 }   // namespace oly::session

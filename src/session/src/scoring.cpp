@@ -61,10 +61,11 @@ std::vector<Scored> score(const AttentionWeights& w, const ScoreConfig& cfg,
     return out;
 }
 
-std::vector<uint32_t> collect_silences(const ScoreConfig& cfg, const uint64_t stream_key,
-                                       const uint64_t tick, const std::span<const float> scores,
-                                       const std::span<const float> mentioned) {
-    const float tau = speak_threshold(cfg);
+std::vector<uint32_t> collect_silences(const uint64_t stream_key, const uint64_t tick,
+                                       const std::span<const float> scores,
+                                       const std::span<const float> mentioned, const float tau) {
+    // tau 由调用方显式传入（含饱和度上调项）——沉默裁决与决策必须同一阈值，
+    // 否则 τ 抬高后"被@沉默"会漏记（07 §4 闭环的隐蔽坑）
     const float band = 0.6f * tau;   // "差一点就说"带下沿
     std::vector<uint32_t> out;
     const auto n = std::min(scores.size(), mentioned.size());

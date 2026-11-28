@@ -5,8 +5,12 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <oly/core/id.hpp>
+#include <oly/quota/quota.hpp>
+
 #include <string>
 
+using namespace oly;
 using namespace oly::gateway;
 
 namespace {
@@ -141,4 +145,120 @@ TEST_CASE("FakeProvider：scripted 顺序 → 模板兜底 → fail_from 失败"
         REQUIRE(bad.error.find("fake:failed") != std::string::npos);
         REQUIRE(p.calls() == 2);
     }
+}
+
+
+// ── M1-2：配额硬墙 / 熔断器 / 成本台账 ─────────────────────────────
+
+namespace {
+
+// 可切换成败的供应商（熔断演练：先坏后好，确定性序列）
+class ToggleProvider final : public LLMProvider {
+public:
+    std::string name() const override { return "toggle"; }
+    Completion complete(const CompletionRequest& /*req*/) override {
+        Completion c;
+        c.provider = name();
+        c.tokens_in = 10;
+        c.tokens_out = 5;
+        c.ok = !fail_;
+        if (fail_) c.error = "toggle:down";
+        ++calls_;
+        return c;
+    }
+    bool fail_ = false;
+    uint64_t calls_ = 0;
+};
+
+}   // namespace
+
+TEST_CASE("网关：配额硬墙——P0 硬失败 / P2 拒绝走降级，预留随到期释放", "[gateway][quota]") {
+    FakeProvider prov;
+    quota::Ledger ledger(quota::Limits{
+        .burst = {1e9, 1e9},
+        .volume = {.cap = 40.0, .window_ms = 1000},   // 主体体量很小
+        .world = {.cap = 1e9, .window_ms = 1000}});
+    Gateway gw(prov, {}, &ledger);
+
+    gateway::CompletionRequest r0 = make_req(Priority::P0_Interactive, "一段有点长的提示词");
+    r0.max_tokens = 16;   // est = 粗估 12 + 16 = 28 < 40（首件预留成功）
+    r0.on_behalf_of = oly::PrincipalId::from_string("01ARZ3NDEKTSV4RRFFQ69G5FAV").value();
+    REQUIRE(gw.submit(r0, 0) != 0);
+    (void)gw.pump(0);   // 结算 ≈ 28 → 桶见底
+
+    // 体量见底 → 第二件 P0 硬失败（quota_exhausted 形状：ref=0 + 计数）
+    REQUIRE(gw.submit(r0, 0) == 0);
+    REQUIRE(gw.counters().quota_rejected == 1);
+
+    // P2 同桶耗尽 → 拒绝走会话侧降级阶梯（不硬停，09 §5）
+    gateway::CompletionRequest r2 = make_req(Priority::P2_Ambient, "内容");
+    r2.on_behalf_of = r0.on_behalf_of;
+    r2.max_tokens = 16;
+    REQUIRE(gw.submit(r2, 0) == 0);
+    REQUIRE(gw.counters().quota_dropped == 1);
+
+    // 窗口滚动 → 恢复受理
+    REQUIRE(gw.submit(r0, 2000) != 0);
+    (void)gw.pump(2000);
+
+    // deadline 到期 → 预留释放（无悬挂占用，07 §3）：独立主体桶
+    gateway::CompletionRequest rd = make_req(Priority::P0_Interactive, "慢请求");
+    rd.max_tokens = 16;
+    rd.on_behalf_of = oly::PrincipalId::from_string("01ARZ3NDEKTSV4RRFFQ69G5FBW").value();
+    rd.deadline_ms = 3000;
+    REQUIRE(gw.submit(rd, 2000) != 0);
+    (void)gw.pump(4000);
+    REQUIRE(gw.counters().expired == 1);
+    REQUIRE(gw.submit(rd, 4000) != 0);   // 已释放 → 可再次预留
+}
+
+TEST_CASE("网关：熔断器——滑窗失败率开断，冷却后半开探测恢复", "[gateway][breaker]") {
+    ToggleProvider prov;
+    Gateway::Caps caps;
+    caps.breaker = {.window = 4, .fail_ratio = 0.5, .cooldown_ms = 100};
+    Gateway gw(prov, caps);
+
+    // 2 成功 + 2 失败 → 滑窗满且失败率达阈 → 熔断
+    prov.fail_ = false;
+    for (int i = 0; i < 2; ++i) {
+        REQUIRE(gw.submit(make_req(Priority::P0_Interactive), 0) != 0);
+        (void)gw.pump(0);
+    }
+    prov.fail_ = true;
+    for (int i = 0; i < 2; ++i) {
+        REQUIRE(gw.submit(make_req(Priority::P0_Interactive), 0) != 0);
+        (void)gw.pump(0);
+    }
+    REQUIRE(gw.breaker_open());
+    REQUIRE(gw.counters().breaker_openings == 1);
+
+    // 开期：P2/P3 直接拒（P0 仍过——会话侧降级兜底，P0 永不丢）
+    REQUIRE(gw.submit(make_req(Priority::P2_Ambient), 0) == 0);
+    REQUIRE(gw.counters().breaker_dropped == 1);
+    REQUIRE(gw.saturation() == 1.0f);   // 熔断开期 = 全饱和（07 §4 反馈上调）
+
+    // 冷却期满 → 半开单件探测：失败 → 重新熔断（新冷却）
+    REQUIRE(gw.submit(make_req(Priority::P2_Ambient), 100) != 0);   // 探测件放行
+    REQUIRE_FALSE(gw.pump(100)->ok);
+    REQUIRE(gw.breaker_open());
+    REQUIRE(gw.submit(make_req(Priority::P2_Ambient), 150) == 0);   // 新冷却内仍拒
+
+    // 再冷却 → 探测成功 → 闭合，滑窗重置
+    prov.fail_ = false;
+    REQUIRE(gw.submit(make_req(Priority::P2_Ambient), 300) != 0);
+    REQUIRE(gw.pump(300)->ok);
+    REQUIRE_FALSE(gw.breaker_open());
+    REQUIRE(gw.submit(make_req(Priority::P3_Summary), 300) != 0);   // 正常受理
+}
+
+TEST_CASE("网关：成本台账累计（07 §7 计数雏形）", "[gateway][cost]") {
+    FakeProvider prov;
+    Gateway gw(prov);
+    (void)gw.submit(make_req(Priority::P0_Interactive, "第一段"));
+    (void)gw.pump(0);
+    (void)gw.submit(make_req(Priority::P2_Ambient, "第二段更长的提示"));
+    (void)gw.pump(0);
+    const auto& c = gw.counters();
+    REQUIRE(c.tokens_in_total > 0);
+    REQUIRE(c.tokens_out_total > 0);
 }

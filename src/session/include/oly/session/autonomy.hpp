@@ -25,6 +25,7 @@ struct PerceivedMessage {
 // 一拍的感知输入（06 §2：感知 = 事实事件与 tick；瞬态信令不入流、不参与打分）
 struct TickContext {
     uint64_t tick = 0;
+    uint64_t now_ms = 0;             // 墙钟位（拍泵注入；配额桶/熔断时钟的确定性来源）
     uint64_t stream_key = 0;
     domain::DomainRegistry* registry = nullptr;   // 领域引用（卡片头/属主查询）
     const domain::Session* session = nullptr;

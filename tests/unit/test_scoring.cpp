@@ -104,19 +104,19 @@ TEST_CASE("估分：沉默事件化 —— 被@必记，borderline 采样确定"
     // 被@但低于阈值 → 必记
     const std::array<float, 2> scores{tau - 0.01f, tau * 0.5f};
     const std::array<float, 2> mentioned{1.0f, 0.0f};
-    const auto noted = collect_silences(cfg, 0, 0, scores, mentioned);
+    const auto noted = collect_silences(0, 0, scores, mentioned, speak_threshold(cfg));
     REQUIRE(noted.size() == 1);
     REQUIRE(noted[0] == 0);
 
     // 未被@且远低于带 → 不记
     const std::array<float, 1> low{tau * 0.3f};
     const std::array<float, 1> none{0.0f};
-    REQUIRE(collect_silences(cfg, 0, 0, low, none).empty());
+    REQUIRE(collect_silences(0, 0, low, none, speak_threshold(cfg)).empty());
 
     // borderline 带内采样：确定性（两次一致），且带外不采
     const float band = 0.6f * tau;
     std::array<float, 2> two{band + 0.01f, band - 0.01f};
-    const auto s1 = collect_silences(cfg, 9, 3, two, none);
-    const auto s2 = collect_silences(cfg, 9, 3, two, none);
+    const auto s1 = collect_silences(9, 3, two, none, speak_threshold(cfg));
+    const auto s2 = collect_silences(9, 3, two, none, speak_threshold(cfg));
     REQUIRE(s1 == s2);
 }

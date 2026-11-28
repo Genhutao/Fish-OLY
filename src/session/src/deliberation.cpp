@@ -70,7 +70,15 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
     energy_ = std::min(1.0f, energy_ + 0.05f);
     if (cooldown_ > 0) --cooldown_;
     cfg_.score.activity_ema = activity_ema_;
-    oc.tau = speak_threshold(cfg_.score);
+    // 饱和度反馈闭环（07 §4）：s = max(网关队列水位, 配额水位)；s ↑ → τ_speak 上调
+    // → 角色自然"安静"——世界预算将尽时群体性"今日话少"，而不是报错
+    float sat = gw_.saturation();
+    if (cfg_.quota_ledger != nullptr) {
+        sat = std::max(sat, cfg_.quota_ledger->world_pressure(ctx.now_ms, persona_.key(),
+                                                              cfg_.world_ref.key()));
+    }
+    sat = std::clamp(sat, 0.0f, 1.0f);
+    oc.tau = speak_threshold(cfg_.score) + cfg_.sat_gain * sat;
 
     // ── 感知特征（M0 派生；换型点：M1 反思管线的 presence/affinity）──
     float mention = 0.0f, urgency = 0.1f;
@@ -161,10 +169,14 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
         req.priority = gateway::Priority::P2_Ambient;   // 自治发言：环境档（07 §2）
         req.prompt = render_prompt(board);
         req.max_tokens = 128;
-        req.deadline_ms = 8000;   // 8s 截止（06 §3.2）；M0 同步 pump 以 0 现在时驱动
+        req.deadline_ms = ctx.now_ms + 8000;   // 8s 截止（06 §3.2）；同步 pump 以调用方时钟驱动
         req.trace = ctx.tick;
-        if (const auto ref = gw_.submit(std::move(req)); ref != 0) {
-            auto rep = gw_.pump(0);
+        // 记账三面（07 §7）：角色消费永远归账到人（09 §6）+ 世界预算键
+        req.actor = persona_;
+        req.on_behalf_of = ctx.session != nullptr ? ctx.session->owner : domain::PrincipalId{};
+        req.world_ref = cfg_.world_ref;
+        if (const auto ref = gw_.submit(std::move(req), ctx.now_ms); ref != 0) {
+            auto rep = gw_.pump(ctx.now_ms);
             if (rep && rep->ok) {
                 oc.speak = true;
                 oc.text = rep->text;
@@ -182,7 +194,7 @@ TickOutcome DeliberationDriver::on_tick(const TickContext& ctx) {
         // ── 沉默估分（06 §2.4）：被@沉默必记；borderline 采样 ───────
         const float scores[1] = {att};
         const float mentioned[1] = {mention};
-        oc.silence_noted = !collect_silences(cfg_.score, ctx.stream_key, ctx.tick, scores, mentioned)
+        oc.silence_noted = !collect_silences(ctx.stream_key, ctx.tick, scores, mentioned, oc.tau)
                                 .empty();
     }
 

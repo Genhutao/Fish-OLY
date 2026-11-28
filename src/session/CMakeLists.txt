@@ -1,4 +1,4 @@
-oly_define_module(session DEPS Oly::domain Oly::events Oly::logdb Oly::exec Oly::gateway Oly::memory Oly::log Oly::codec)
+oly_define_module(session DEPS Oly::domain Oly::events Oly::logdb Oly::exec Oly::gateway Oly::memory Oly::quota Oly::log Oly::codec)
 if(MSVC)
     target_compile_definitions(oly_session PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
