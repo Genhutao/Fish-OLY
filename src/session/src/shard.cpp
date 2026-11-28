@@ -1,6 +1,7 @@
 #include "oly/session/shard.hpp"
 
 #include "oly/exec/beat_pump.hpp"
+#include "oly/log/log.hpp"
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -28,7 +29,8 @@ Shard::Shard(const Deps deps, Channel&& ch)
       period_ms_(deps.tick_period_ms),
       store_root_(deps.store_root),
       snapshot_root_(deps.snapshot_root),
-      inbox_(std::move(ch)) {}
+      inbox_(std::move(ch)),
+      sink_(std::move(deps.sink)) {}
 
 Shard::~Shard() {
     // 生命周期契约：pool.stop() 先于分片析构；拍泵协程捕获 this，通道随 io 一并消亡
@@ -45,6 +47,12 @@ Result<SessionRuntime*> Shard::create_session(const domain::SessionId id, const 
 
     SessionRuntime::Deps d{*registry_, *owned, wheel_, period_ms_, snapshot_root_ / id.str(),
                            identity_};
+    if (sink_) {   // 空 sink 不挂钩子：on_commit 在 append 与 clear 之间调用，
+                   // 空包装器会抛 bad_function_call → 批滞留 → seq 永久失配
+        d.on_commit = [sink = sink_](const std::vector<events::EventEnvelope>& facts) {
+            for (const auto& e : facts) sink(e);
+        };
+    }
     auto rt = SessionRuntime::create(id, d, now_ms);
     if (!rt) return unexpected(rt.error());
 
@@ -66,6 +74,12 @@ Result<SessionRuntime*> Shard::recover_session(const domain::SessionId id, const
 
     SessionRuntime::Deps d{*registry_, *owned, wheel_, period_ms_, snapshot_root_ / id.str(),
                            identity_};
+    if (sink_) {   // 空 sink 不挂钩子：on_commit 在 append 与 clear 之间调用，
+                   // 空包装器会抛 bad_function_call → 批滞留 → seq 永久失配
+        d.on_commit = [sink = sink_](const std::vector<events::EventEnvelope>& facts) {
+            for (const auto& e : facts) sink(e);
+        };
+    }
     auto rt = SessionRuntime::recover(id, d, now_ms);
     if (!rt) return unexpected(rt.error());
 
@@ -93,7 +107,11 @@ void Shard::on_beat(const uint64_t now_ms) {
         const auto it = sessions_.find(due);
         if (it == sessions_.end()) continue;
         (void)it->second->on_tick(now_ms);   // 槽已由分片统一摘取（避免二次消费）
-        (void)it->second->drain(64);         // 唤醒即批（01 §5）
+        auto dr = it->second->drain(64);     // 唤醒即批（01 §5）
+        if (!dr) {
+            OLY_LOG_ERROR("shard drain failed: {} / {} (reg_head={})", dr.error().code,
+                          dr.error().message, it->second->session().head_seq);
+        }
     }
     // 入站命令不必等轮式拍：有滞留即排空（交互延迟 ≤ 1 拍的兜底）
     for (auto& [key, rt] : sessions_) {
@@ -132,7 +150,7 @@ Result<Host> Host::create(const Deps deps) {
     h.period_ms_ = deps.tick_period_ms;
     for (std::size_t i = 0; i < deps.pool.size(); ++i) {
         Shard::Deps d{deps.pool.at(i), deps.registry, deps.identity, deps.tick_period_ms,
-                      deps.store_root, deps.snapshot_root};
+                      deps.store_root, deps.snapshot_root, 4096, deps.sink};
         auto sh = Shard::create(d);
         if (!sh) return unexpected(sh.error());
         h.shards_.push_back(std::move(sh.value()));

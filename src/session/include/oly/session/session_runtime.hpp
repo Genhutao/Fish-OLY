@@ -18,6 +18,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <unordered_set>
@@ -25,7 +26,7 @@
 
 namespace oly::session {
 
-enum class CmdAction : uint8_t { SendMessage = 1, Tick = 2 };
+enum class CmdAction : uint8_t { SendMessage = 1, Tick = 2, AdvanceRead = 3 };
 
 struct Command {
     CommandId id;
@@ -34,6 +35,7 @@ struct Command {
     CmdAction action = CmdAction::SendMessage;
     uint64_t tick = 0;                     // Tick 命令携带拍号
     std::string text;                      // SendMessage payload
+    uint64_t read_seq = 0;                 // AdvanceRead：推进读游标目标（10 §4.3）
 };
 
 // 感知缓冲窗口上限（非事实态，重放可重建；超限从头淘汰）
@@ -53,6 +55,9 @@ public:
         // 身份域只读快照（01 §1 I3 例外）：非空 → 权限检查走无锁快照路径；
         // 空 → 退回注册表直查（单 loop 单写者场景）。M1 随身份流事件刷新。
         std::shared_ptr<const domain::IdentitySnapshot> identity;
+        // 提交外送钩子（10 §5 WS 出站）：一批事实 append 成功后回调（loop 线程）。
+        // 实现方须自行跨线程转发（有界队列），回调内不做阻塞 IO。
+        std::function<void(const std::vector<events::EventEnvelope>&)> on_commit;
     };
 
     // 创建：写 session.created（seq 0）并在轮式调度器登记首拍
@@ -121,6 +126,7 @@ private:
     uint64_t perceived_seq_ = 0;                // 上一拍感知游标（新到消息的分界）
     std::filesystem::path snap_dir_;
     std::shared_ptr<const domain::IdentitySnapshot> identity_;   // 身份快照（无锁权限源）
+    std::function<void(const std::vector<events::EventEnvelope>&)> on_commit_;
 };
 
 }   // namespace oly::session

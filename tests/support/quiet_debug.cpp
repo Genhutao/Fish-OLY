@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <windows.h>
 
+#include <oly/log/log.hpp>
+
 namespace {
 
 struct QuietDebugBootstrap {
@@ -13,6 +15,9 @@ struct QuietDebugBootstrap {
         // CRT stdio 流上限：默认 512 个打开 FILE*，多会话冒烟（每会话一段文件句柄）
         // 会在 ~509 处 fopen 失败；放宽到 CRT 上限
         (void)_setmaxstdio(8192);
+
+        // 测试全局日志：Debug 级到 stderr（oly::log 门面，spdlog 后端）
+        oly::log::init(oly::log::Level::Debug);
 
         // CRT 三类报告（警告/错误/断言）→ stderr + 调试通道，不再弹窗
         _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);

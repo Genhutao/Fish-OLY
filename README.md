@@ -17,7 +17,9 @@ oly-engine/
 │   ├── identity/         身份分片：单写者执行器 + 原子快照发布（01 §1）
 │   ├── session/          会话运行时：准入/幂等/估分/提示板/决策/快照重放/多 loop 分片（04–06）
 │   ├── gateway/          模型网关：Provider 接口、优先级车道、确定性 Fake、独立域（07）
-│   └── app/              oly 可执行入口（sanity）
+│   ├── api/              REST + WS 流：Bearer 鉴权、命令受理 202、/v1/stream 订阅重放（10）
+│   ├── log/              日志门面：OLY_LOG_* 宏（spdlog 后端，无 spdlog 时退化为 no-op）
+│   └── app/              oly / oly-server 可执行入口（sanity / API 服务装配）
 └── tests/
     ├── unit/             各模块单元测试
     └── golden/           黄金回放框架种子（确定性断言，13 §2）
@@ -27,7 +29,7 @@ oly-engine/
 
 ## 构建
 
-依赖经 vcpkg 清单管理（当前仅 `catch2`；boost/openssl 等随对应模块落地加入清单）。
+依赖经 vcpkg 清单管理（`catch2`、`boost-asio`、`boost-beast`、`boost-json`、`spdlog`；模块各自条件门控，依赖未就绪时对应模块/测试自动禁用，主构建不受影响）。
 
 ```bat
 :: 任选 VS 开发者命令行（x64 Native Tools Command Prompt）或先 call vcvars64.bat
@@ -67,5 +69,9 @@ Linux：`cmake --preset linux-debug && cmake --build --preset linux-debug && cte
 | **多 loop 分片托管** | Shard/Host：会话按键%分片路由、跨 loop 有界通道、beat 泵协程（13 §4 步骤 3） |
 | **网关域拆分** | 独立 loop 池托管（同步通路 M0 形态；泵协程化属 M1） |
 | **黄金冒烟：1k 会话** | 1000 会话 × 4 loop × 10 拍：拍数到位/插话跨 loop 落地/链抽查；p99 < 50ms（release 判定，debug 阈值放宽并注明） |
+| **日志门面 log** | OLY_LOG_* 宏 + spdlog 后端（stderr 彩色 + 滚动文件，warn 即 flush；无 spdlog 退化为 no-op），logdb/session/api 接入 |
+| **存储重开** | SegmentStore 重开扫段重建链头，拒绝损坏链（05 §2） |
+| **API 最小集（10）** | Bearer 鉴权 + REST（auth/personas/sessions/messages/read/commands，幂等键重放、命令状态事件索引）+ WS /v1/stream（subscribe→重放→sync→实时、瞬态信令、慢消费者断开） |
+| **黄金 e2e：API 全链** | 真实 Beast 客户端：REST 全路由断言 + WS 订阅补齐/实时事件/信令广播（含自治角色发言入流） |
 
-下一步（13 §4 M0 收尾）：API 最小集（auth/sessions/messages/personas + 瞬态信令 WS 流，10）→ M0 退出标准齐备后一并推送 M0-3..M0-5。
+M0 退出标准（13 §1）已齐备：API 最小集 + 1k 会话冒烟 + 全量测试绿。M0-3..M0-6 一并推送。

@@ -86,8 +86,9 @@ TEST_CASE("黄金冒烟：1k 会话多 loop 托管 p99 < 50ms", "[golden][smoke]
     auto pool = exec::LoopPool::create(4);
     REQUIRE(pool.has_value());
     // 拍周期 100ms = 轮式分辨率（01 §2）；10 拍 ≈ 1s
-    session::Host::Deps hd{*pool, reg, std::make_shared<const domain::IdentitySnapshot>(
-                                          reg.identity_snapshot(1)),
+    // 权限快照源：与身份分片 publish 同构（引导版本 v1）
+    auto snapshot = std::make_shared<const domain::IdentitySnapshot>(reg.identity_snapshot(1));
+    session::Host::Deps hd{*pool, reg, std::move(snapshot),
                            100, store_root, snap_root};
     auto host = session::Host::create(hd);
     REQUIRE(host.has_value());
@@ -139,7 +140,18 @@ TEST_CASE("黄金冒烟：1k 会话多 loop 托管 p99 < 50ms", "[golden][smoke]
             REQUIRE(store.has_value());
             const auto all = store->read_range(0, 10000);
             REQUIRE(all.has_value());
-            REQUIRE(all->size() >= static_cast<std::size_t>(kTicks) + 1);   // created + 消息
+            if (all->size() < static_cast<std::size_t>(kTicks) + 1) {
+                std::string dump = "chain short: sid=" + sid.str() + " events=" +
+                                   std::to_string(all->size()) + " ticks=" +
+                                   std::to_string(host->session(sid)->ticks()) + " proj=" +
+                                   std::to_string(reg.session(sid)->messages.size()) + " committed=" +
+                                   std::to_string(host->session(sid)->committed_seq()) + " [";
+                for (const auto& e : all.value()) {
+                    dump += std::to_string(e.seq) + ":" + e.type + " ";
+                }
+                dump += "]";
+                FAIL(dump);
+            }
             REQUIRE(all->front().type == "session.created");
         }
     }

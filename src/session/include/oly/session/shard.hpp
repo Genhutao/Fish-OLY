@@ -34,6 +34,8 @@ public:
         std::filesystem::path store_root;                            // 段目录 = root/<sid>
         std::filesystem::path snapshot_root;                         // 快照目录 = root/<sid>
         std::size_t inbox_capacity = 4096;                           // 跨 loop 通道界（01 §4）
+        // 提交外送（10 §5）：每分片一份，透传至会话运行时 on_commit
+        std::function<void(const events::EventEnvelope&)> sink;
     };
 
     // 堆式构造（拍泵协程捕获 this）；泵协程在此入队，随池 start 生效。
@@ -84,6 +86,7 @@ private:
     Channel inbox_;
     std::vector<double> beat_ms_;
     std::atomic<uint64_t> due_seen_{0};   // 诊断：累计摘到的到期键数
+    std::function<void(const events::EventEnvelope&)> sink_;
 };
 
 // ── 宿主：N loop × N 分片 ─────────────────────────────────────────────
@@ -96,6 +99,7 @@ public:
         uint64_t tick_period_ms = 1000;
         std::filesystem::path store_root;
         std::filesystem::path snapshot_root;
+        std::function<void(const events::EventEnvelope&)> sink;   // 提交外送（10 §5）
     };
 
     static Result<Host> create(Deps deps);   // 分片数 = 池 loop 数

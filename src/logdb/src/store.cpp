@@ -281,7 +281,10 @@ Result<void> SegmentStore::append(const std::span<events::EventEnvelope> batch) 
         if (s != expected) {
             return unexpected(err("logdb:seq-mismatch",
                                   "expected seq " + std::to_string(expected) + ", got " +
-                                      std::to_string(s)));
+                                      std::to_string(s) + " (batch size " +
+                                      std::to_string(batch.size()) + ", first seq " +
+                                      std::to_string(batch.front().seq) + ", last seq " +
+                                      std::to_string(batch.back().seq) + ")"));
         }
         ++expected;
     }

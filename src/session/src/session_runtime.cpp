@@ -1,5 +1,7 @@
 #include "oly/session/session_runtime.hpp"
 
+#include "oly/log/log.hpp"
+
 #include "oly/domain/permissions.hpp"
 #include "oly/core/hash.hpp"
 #include "oly/session/replay.hpp"
@@ -46,6 +48,7 @@ Result<SessionRuntime> SessionRuntime::create(const domain::SessionId id, const 
     rt.tick_period_ms_ = deps.tick_period_ms;
     rt.snap_dir_ = deps.snapshot_dir;
     rt.identity_ = deps.identity;
+    rt.on_commit_ = deps.on_commit;
 
     // seq 0 = session.created（04 §3 流开篇；prev_hash = 创世常量）
     codec::Encoder p;
@@ -98,6 +101,7 @@ Result<SessionRuntime> SessionRuntime::recover(const domain::SessionId id, const
     rt.tick_period_ms_ = deps.tick_period_ms;
     rt.snap_dir_ = deps.snapshot_dir;
     rt.identity_ = deps.identity;
+    rt.on_commit_ = deps.on_commit;
     rt.ticks_ = rec->ticks;
     rt.perceived_ = std::move(rec->perceived);
     rt.perceived_seq_ = rec->head_seq - 1;   // 锚内消息已在窗口中，后续增量才属新到
@@ -220,7 +224,12 @@ void SessionRuntime::emit_fact(const events::EventKind kind, const Command& cmd,
     events::EventEnvelope e;
     e.stream.kind = events::StreamKind::Session;
     e.stream.id = id_.bytes();
-    e.seq = registry_->session(id_)->head_seq++;
+    auto* reg_sess = registry_->session(id_);
+    if (reg_sess->head_seq == 1 && !reg_sess->messages.empty()) {
+        OLY_LOG_CRITICAL("seq regression sid={} sess@{:p} msgs={} ticks_={}", id_.str(),
+                         static_cast<const void*>(reg_sess), reg_sess->messages.size(), ticks_);
+    }
+    e.seq = reg_sess->head_seq++;
     e.tick = cmd.tick;
     e.kind = kind;
     e.command = cmd.id;
@@ -240,6 +249,7 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
     auto* s = registry_->session(id_);
     switch (cmd.action) {
         case CmdAction::SendMessage:
+        case CmdAction::AdvanceRead:
             d = identity_ != nullptr && s != nullptr
                     ? domain::check(*identity_, *s, domain::Action::SendMessage, cmd.actor)
                     : domain::check(*registry_, domain::Action::SendMessage, id_, cmd.actor);
@@ -275,6 +285,14 @@ Result<uint64_t> SessionRuntime::admit_and_apply(const Command& cmd,
             }
             break;
         }
+        case CmdAction::AdvanceRead:
+            // 读游标推进（10 §4.3 read.advance）：成员本地态，不产生事实事件
+            if (s != nullptr) {
+                if (auto* m = s->member(cmd.actor); m != nullptr) {
+                    m->read_seq = std::max(m->read_seq, cmd.read_seq);
+                }
+            }
+            break;
         case CmdAction::Tick:
             break;   // 拍本身无事实
     }
@@ -295,6 +313,12 @@ Result<uint64_t> SessionRuntime::drain(const std::size_t max_items) {
     // 一拍一提交（组提交雏形，05 §3）：本批全部事实一次落盘，成功后可见
     if (!pending_facts_.empty()) {
         if (const auto r = store_->append(pending_facts_); !r) return unexpected(r.error());
+        try {
+            if (on_commit_) on_commit_(pending_facts_);   // 先持久后可见（05 §3）：游标后外送
+        } catch (...) {
+            OLY_LOG_ERROR("on_commit sink threw; facts {}..{} still committed",
+                          pending_facts_.front().seq, pending_facts_.back().seq);
+        }
         pending_facts_.clear();
     }
     return facts;

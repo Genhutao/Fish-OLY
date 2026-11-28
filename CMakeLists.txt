@@ -34,6 +34,7 @@ function(oly_define_module NAME)
     endforeach()
 endfunction()
 
+add_subdirectory(src/log)
 add_subdirectory(src/core)
 add_subdirectory(src/codec)
 add_subdirectory(src/events)
@@ -52,6 +53,7 @@ endif()
 add_subdirectory(src/domain)
 add_subdirectory(src/identity)
 add_subdirectory(src/session)
+add_subdirectory(src/api)
 
 # ── 测试（Catch2 就绪时启用；未就绪仅禁用测试，主构建不受影响）──────────
 if(OLY_BUILD_TESTS)

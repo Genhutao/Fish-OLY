@@ -32,3 +32,12 @@ target_link_libraries(oly_tests PRIVATE
     Oly::warnings
     Catch2::Catch2WithMain)
 add_test(NAME oly.all COMMAND oly_tests)
+
+# api e2e（api 模块就绪时纳入；Boost::json 门控）
+if(TARGET Oly::api)
+    target_sources(oly_tests PRIVATE golden/test_api_e2e.cpp)
+    target_link_libraries(oly_tests PRIVATE Oly::api)
+    if(MSVC)
+        target_compile_definitions(oly_tests PRIVATE _WIN32_WINNT=0x0601)
+    endif()
+endif()
