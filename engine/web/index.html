@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OLY 世界引擎 · demo</title>
+<style>
+:root{
+  --ink:#08080B; --panel:#0D0D12; --panel2:#111117;
+  --line:rgba(237,231,220,.12); --line2:rgba(237,231,220,.06);
+  --paper:#EDE7DC; --muted:#8C8578; --dim:#5F5A51;
+  --gold:#C9A227; --gold2:#E3C36B; --cyan:#6FA8A0; --red:#B4574E;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ink);color:var(--paper);font:13px/1.65 "PingFang SC","Hiragino Sans GB",system-ui,sans-serif;overflow:hidden}
+.mono{font-family:"SF Mono",Menlo,monospace}
+.serif{font-family:"Songti SC","Noto Serif SC",Georgia,serif}
+
+header{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:22px;padding:0 20px;background:var(--panel)}
+.brand{font-family:"Songti SC",Georgia,serif;font-size:19px;letter-spacing:.14em}
+.brand i{font-style:normal;color:var(--gold2)}
+.brand em{font-style:normal;font-family:"SF Mono",Menlo,monospace;font-size:9.5px;letter-spacing:.18em;color:var(--dim);border:1px solid var(--line);padding:2px 6px;margin-left:10px;vertical-align:3px}
+.stats{display:flex;gap:18px;margin-left:auto;font-size:11.5px;color:var(--muted)}
+.stats b{color:var(--paper);font-weight:500;font-family:"SF Mono",Menlo,monospace}
+.stats .badge{color:var(--gold2);border:1px solid rgba(201,162,39,.35);padding:2px 8px;font-family:"SF Mono",Menlo,monospace;font-size:10.5px}
+button{font:inherit;color:inherit;background:none;border:1px solid var(--line);padding:6px 12px;cursor:pointer}
+button:hover{border-color:rgba(201,162,39,.55);color:var(--gold2)}
+button.primary{background:rgba(201,162,39,.12);border-color:rgba(201,162,39,.45);color:var(--gold2)}
+button.tiny{padding:2px 7px;font-size:10.5px;color:var(--muted)}
+button.tiny:hover{color:var(--gold2)}
+
+main{display:grid;grid-template-columns:236px 1fr 392px;height:calc(100% - 56px)}
+aside,section{min-height:0}
+.left{border-right:1px solid var(--line);overflow:auto;padding:16px 14px 30px}
+.center{display:flex;flex-direction:column;min-height:0}
+.right{border-left:1px solid var(--line);overflow:auto;padding:16px 16px 40px}
+h3{font-size:10px;letter-spacing:.18em;color:var(--dim);text-transform:uppercase;margin:18px 0 10px;font-weight:400}
+h3:first-child{margin-top:4px}
+
+.pt{cursor:pointer;padding:10px;border:1px solid transparent;display:flex;gap:10px;align-items:flex-start}
+.pt:hover{background:rgba(255,255,255,.02)}
+.pt.on{border-color:rgba(201,162,39,.4);background:rgba(201,162,39,.05)}
+.pt .av{width:30px;height:30px;display:grid;place-items:center;background:var(--panel2);border:1px solid var(--line);font-size:15px;flex:none}
+.pt .nm{font-size:13.5px;margin-bottom:2px}
+.pt .mt{font-size:10.5px;color:var(--dim);letter-spacing:.03em}
+.bar{height:3px;background:rgba(255,255,255,.06);margin-top:6px;position:relative}
+.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--gold)}
+.bar.low i{background:var(--red)}
+.act{font-size:10.5px;color:var(--muted);margin-top:5px;line-height:1.45}
+
+.room{cursor:pointer;padding:9px 10px;border:1px solid transparent;display:flex;justify-content:space-between;gap:8px}
+.room:hover{background:rgba(255,255,255,.02)}
+.room.on{border-color:rgba(111,168,160,.35);background:rgba(111,168,160,.05)}
+.room .k{font-size:9px;color:var(--dim);border:1px solid var(--line);padding:1px 4px;height:16px}
+.room .n{font-size:12.5px}
+.room .t{font-size:10px;color:var(--dim);margin-top:2px}
+
+.chead{padding:14px 22px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:12px}
+.chead .t{font-size:15px;font-family:"Songti SC",Georgia,serif;letter-spacing:.05em}
+.chead .s{font-size:11px;color:var(--dim)}
+.msgs{flex:1;overflow:auto;padding:18px 22px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:74%;display:flex;flex-direction:column;gap:3px}
+.msg.me{align-self:flex-end;align-items:flex-end}
+.msg .who{font-size:10px;color:var(--dim);letter-spacing:.06em}
+.msg .b{padding:8px 12px;border:1px solid var(--line);background:rgba(255,255,255,.02);white-space:pre-wrap;word-break:break-word}
+.msg.me .b{background:rgba(201,162,39,.09);border-color:rgba(201,162,39,.3)}
+.msg.sys{align-self:center;max-width:90%}
+.msg.sys .b{border:0;background:none;color:var(--dim);font-size:11px;padding:2px}
+.composer{border-top:1px solid var(--line);padding:12px 22px;display:flex;gap:10px;align-items:flex-end;background:var(--panel)}
+.composer textarea{flex:1;resize:none;height:44px;background:var(--ink);border:1px solid var(--line);color:var(--paper);padding:10px 12px;font:inherit;outline:none}
+.composer textarea:focus{border-color:rgba(201,162,39,.45)}
+.hint{font-size:10.5px;color:var(--dim);margin-top:6px}
+
+.search{display:flex;gap:6px;margin-bottom:10px}
+.search input{flex:1;background:var(--ink);border:1px solid var(--line);color:var(--paper);padding:7px 9px;font:inherit;outline:none;font-size:12px}
+.search input:focus{border-color:rgba(201,162,39,.45)}
+.recall{border:1px solid rgba(201,162,39,.3);background:rgba(201,162,39,.04);padding:9px 10px;margin-bottom:12px;font-size:11.5px;color:#D6CDBB;white-space:pre-wrap;line-height:1.6}
+.recall b{display:block;color:var(--gold2);font-weight:500;font-size:10px;letter-spacing:.14em;margin-bottom:5px;text-transform:uppercase}
+.slot{border:1px solid var(--line);margin-bottom:10px;background:rgba(255,255,255,.014)}
+.slot .sh{display:flex;align-items:center;gap:8px;padding:7px 9px;border-bottom:1px solid var(--line2);font-size:10px;color:var(--dim);letter-spacing:.08em}
+.slot .ly{color:var(--gold2);border:1px solid rgba(201,162,39,.4);padding:0 4px}
+.slot .vec{margin-left:auto;font-family:"SF Mono",Menlo,monospace;font-size:10px;color:var(--cyan)}
+.slot .st{padding:8px 9px;font-size:11.5px;color:#CFC8BA;line-height:1.6}
+.mem{display:flex;gap:8px;padding:6px 9px;border-top:1px solid var(--line2);font-size:11px;color:var(--muted);align-items:flex-start}
+.mem .txt{flex:1;line-height:1.5}
+.mem.off .txt{text-decoration:line-through;color:var(--dim)}
+.mem .w{font-family:"SF Mono",Menlo,monospace;font-size:9.5px;color:var(--dim);flex:none;padding-top:1px}
+.hit{padding:7px 9px;border:1px solid var(--line);margin-bottom:6px;font-size:11.5px}
+.hit .sc{float:right;font-family:"SF Mono",Menlo,monospace;color:var(--gold2);font-size:10px}
+.hit .ly{color:var(--dim);font-size:10px;margin-right:6px}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--panel2);border:1px solid rgba(180,87,78,.5);color:#E7C6C2;padding:8px 14px;font-size:12px;display:none;max-width:70vw}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">OLY <i>世界引擎</i><em>DEMO</em></div>
+  <div class="stats">
+    <span>模型 <span class="badge" id="model">…</span></span>
+    <span>tick <b id="tick">0</b></span>
+    <span>day <b id="day">1</b></span>
+    <span>事件 <b id="events">0</b></span>
+    <span>记忆 <b id="mems">0</b></span>
+  </div>
+  <button class="primary" id="btn-tick">推进一拍</button>
+</header>
+
+<main>
+  <aside class="left">
+    <h3>角色</h3>
+    <div id="personas"></div>
+    <h3>房间</h3>
+    <div id="rooms"></div>
+  </aside>
+
+  <section class="center">
+    <div class="chead">
+      <span class="t" id="chead-t">月下庭院 · 夜谈</span>
+      <span class="s" id="chead-s"></span>
+    </div>
+    <div class="msgs" id="msgs"></div>
+    <form class="composer" id="form">
+      <textarea id="input" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <button class="primary" type="submit" id="send">发送</button>
+    </form>
+  </section>
+
+  <aside class="right">
+    <h3>记忆库 · 成员级</h3>
+    <div class="search">
+      <input id="q" placeholder="检索记忆，如「我妈的身体」">
+      <button class="tiny" id="btn-q">检索</button>
+    </div>
+    <div id="recall"></div>
+    <div id="hits"></div>
+    <div id="slots"></div>
+    <div class="hint">撤回的是「一条成员」，槽向量会由剩下的成员重算。左边那串指针对得上，就说明重建是确定性的。</div>
+  </aside>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const S = { view:null, mode:'room', roomId:'room-moon', personaId:null, recall:null };
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function load(){
+  const r = await fetch('/api/state');
+  S.view = await r.json();
+  render();
+}
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.style.display='block';
+  clearTimeout(t._h); t._h = setTimeout(()=>t.style.display='none', 4200);
+}
+function target(){
+  if (S.mode==='dm') return {personaId:S.personaId};
+  return {roomId:S.roomId};
+}
+function render(){
+  const v = S.view; if(!v) return;
+  $('model').textContent = v.model || 'mock';
+  $('tick').textContent = v.tick;
+  $('day').textContent = v.day;
+  $('events').textContent = v.events;
+  $('mems').textContent = v.memory.members + ' / ' + v.memory.slots + '槽';
+
+  $('personas').innerHTML = v.personas.map(p => `
+    <div class="pt ${S.mode==='dm'&&S.personaId===p.id?'on':''}" data-p="${p.id}">
+      <div class="av">${esc(p.avatar)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="nm">${esc(p.name)}</div>
+        <div class="mt">${esc(p.mood)} · 好感 ${p.affection.toFixed(1)}</div>
+        <div class="bar ${p.energy<30?'low':''}"><i style="width:${Math.max(2,p.energy)}%"></i></div>
+        <div class="act">${esc(p.activity||'')}</div>
+      </div>
+    </div>`).join('');
+
+  $('rooms').innerHTML = v.rooms.map(r => `
+    <div class="room ${S.mode==='room'&&S.roomId===r.id?'on':''}" data-r="${r.id}">
+      <div><div class="n">${esc(r.name)}</div><div class="t">${esc(r.topic)}</div></div>
+      <div class="k">${r.kind==='script'?'剧本':'群'}</div>
+    </div>`).join('');
+
+  let title='', sub='', msgs=[];
+  if (S.mode==='dm'){
+    const p = v.personas.find(x=>x.id===S.personaId);
+    title = p ? p.name : '单聊';
+    sub = '单聊 · 记忆紧贴发言注入';
+    msgs = (v.dms && v.dms[S.personaId]) || [];
+  } else {
+    const r = v.rooms.find(x=>x.id===S.roomId);
+    title = r ? r.name : '房间';
+    sub = r ? r.topic : '';
+    msgs = r ? r.messages : [];
+  }
+  $('chead-t').textContent = title;
+  $('chead-s').textContent = sub;
+
+  const box = $('msgs');
+  box.innerHTML = msgs.map(m => {
+    if (m.actor==='system') return `<div class="msg sys"><div class="b">${esc(m.text)}</div></div>`;
+    const me = m.actor==='user';
+    return `<div class="msg ${me?'me':''}">
+      <div class="who">${esc(m.name||(me?'我':''))}${m.mock?' · mock':''}</div>
+      <div class="b">${esc(m.text)}</div></div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+
+  $('slots').innerHTML = (v.slots||[]).slice().reverse().map(s => {
+    const ms = (s.members||[]).map(m => `
+      <div class="mem ${m.state==='forgotten'?'off':''}">
+        <div class="txt">${esc(m.text)}</div>
+        <div class="w">w${m.w}</div>
+        <button class="tiny" data-${m.state==='forgotten'?'revive':'forget'}="${m.id}">${m.state==='forgotten'?'恢复':'撤回'}</button>
+      </div>`).join('');
+    return `<div class="slot">
+      <div class="sh"><span class="ly">${s.layer}</span><span>${s.members.length} 成员</span><span class="vec">${esc(s.vec)}</span></div>
+      <div class="st">${esc(s.text)}</div>${ms}</div>`;
+  }).join('');
+}
+function renderRecall(block, hits){
+  $('recall').innerHTML = block ? `<div class="recall"><b>注入到这一轮</b>${esc(block)}</div>` : '';
+  $('hits').innerHTML = (hits||[]).map(h=>`
+    <div class="hit"><span class="sc">${h.score.toFixed(3)}</span>
+    <span class="ly">${h.layer}</span>${esc(h.text)}</div>`).join('');
+}
+async function send(e){
+  e && e.preventDefault();
+  const text = $('input').value.trim();
+  if(!text) return;
+  $('input').value='';
+  const body = Object.assign({text}, target());
+  const r = await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data = await r.json();
+  S.view = data.view;
+  if (data.result && data.result.error) toast('模型错误：' + data.result.error);
+  if (data.result){
+    renderRecall(data.result.memBlock, data.result.hits);
+    if (data.result.remember) $('q').placeholder = '本轮记忆动作：' + data.result.remember;
+  }
+  render();
+}
+async function tick(){
+  const r = await fetch('/api/tick',{method:'POST'});
+  S.view = await r.json(); render();
+}
+async function search(){
+  const q = $('q').value.trim(); if(!q) return;
+  const r = await fetch('/api/memory/search?q='+encodeURIComponent(q));
+  const d = await r.json();
+  renderRecall('', d.hits);
+}
+async function memOp(kind, id){
+  const r = await fetch('/api/memory/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({memberId:id})});
+  const d = await r.json();
+  if(d.error){ toast(d.error); return; }
+  S.view = d.view; render();
+}
+
+document.addEventListener('click', ev => {
+  const p = ev.target.closest('[data-p]'); if(p){ S.mode='dm'; S.personaId=p.dataset.p; render(); return; }
+  const r = ev.target.closest('[data-r]'); if(r){ S.mode='room'; S.roomId=r.dataset.r; render(); return; }
+  const f = ev.target.closest('[data-forget]'); if(f){ memOp('forget', f.dataset.forget); return; }
+  const v = ev.target.closest('[data-revive]'); if(v){ memOp('revive', v.dataset.revive); return; }
+});
+$('form').addEventListener('submit', send);
+$('input').addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+$('btn-tick').onclick = tick;
+$('btn-q').onclick = search;
+$('q').addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); search(); } });
+
+load();
+setInterval(()=>{ if(S.view) load(); }, 4000);
+</script>
+</body>
+</html>

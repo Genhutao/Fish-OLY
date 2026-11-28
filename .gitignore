@@ -1,34 +1,18 @@
-# ── 二进制产物 ────────────────────────────────
-bin/
-build/bin/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# ── 依赖与构建缓存 ────────────────────────────
-frontend/node_modules/
-frontend/dist/
-node_modules/
-.gocache/
-.gomodcache/
-.gobin/
-.pnpm-store/
-
-# ── 密钥 / 凭据：绝对不能提交 ──────────────────
-.ssh/
-*.pem
-*.key
-id_rsa*
-id_ed25519*
-.env
-.env.*
-
-# ── 系统噪音 ──────────────────────────────────
+# macOS
 .DS_Store
-Thumbs.db
-*.log
 
-# 含私钥，不提交
-docs/仓库连接信息.md
+# 本机内部工作区（不随仓库分发）
+.workbuddy/
+.zcode/
+SWARM.md
+
+# 甲方交付资料（旧 Demo 已在仓库中，资料含二进制不重复入库）
+OLY-世界引擎-交付包/
+
+# 引擎运行时数据（事件日志可重建）与编译产物
+engine/data/
+engine/bin/
+
+# 日志与临时
+*.log
+*.tmp
